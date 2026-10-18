@@ -2,10 +2,12 @@
 """Experimental iLink adapter inherited from the supplied source.
 
 This implementation handles QR login, polling and request/reply video delivery.
-Only local mocked protocol/encryption tests have been run in this project;
-current service availability, account eligibility and actual receipt remain
-unverified. It is disabled by default and restricts replies to an owner or
-explicit allowlist. Mail is a separate optional scheduled delivery mechanism.
+Mocked protocol/encryption tests and one live Windows event-video delivery
+were verified on 2026-10-18; the scanning user confirmed handset playback of
+a six-second synthetic clip. Other accounts/devices and future protocol
+compatibility remain unverified. It is disabled by default and restricts
+replies to an owner or explicit allowlist. Mail is a separate optional
+scheduled delivery mechanism.
 """
 import base64
 import datetime
