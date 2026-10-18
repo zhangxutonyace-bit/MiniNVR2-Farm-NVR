@@ -171,15 +171,19 @@ class Hub(object):
     def recording_paths(self):
         """当前正在写入（事件录像中）的文件绝对路径集合 —— 回放列表据此排除「写入中」。"""
         out = set()
-        try:
-            from .camera import remuxing_paths
-            out |= remuxing_paths()      # 正在做 faststart 重封装的也算「未完成」
-        except Exception:
-            pass
         with self.lock:
             for c in self.cams.values():
-                if c.rec_proc is not None and c.rec_path:
+                # rec_proc is cleared before FFmpeg finishes stopping. Keep
+                # rec_path hidden until stop_record hands it to the remux set.
+                if c.rec_path:
                     out.add(c.rec_path)
+        # Read remux state after camera paths: stop_record registers remux before
+        # clearing rec_path, so a concurrent handoff is present in either set.
+        try:
+            from .camera import remuxing_paths
+            out |= remuxing_paths()
+        except Exception:
+            pass
         return out
 
     def info(self):

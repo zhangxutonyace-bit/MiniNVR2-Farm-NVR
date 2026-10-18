@@ -155,7 +155,7 @@ def validate_package_tree(root: Path) -> list[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="2.2.1")
+    parser.add_argument("--version", default="2.2.2")
     parser.add_argument("--output-dir", type=Path, default=REPO.parent / "deliverables")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", args.version):
@@ -175,6 +175,10 @@ def main() -> int:
     startup = json.loads((REPO / "validation-local" / "startup-exe.json").read_text(encoding="utf-8-sig"))
     if startup.get("version") != args.version or any(value != "PASS" for key, value in startup.items() if key != "version"):
         raise ValueError("Missing matching successful EXE startup evidence")
+    events = json.loads((REPO / "validation-local" / ("event-exe-v" + args.version + ".json")).read_text(encoding="utf-8-sig"))
+    event_checks = ("http_startup", "synthetic_loopback_delivery", "encrypted_event_integrity", "web_quit")
+    if events.get("version") != args.version or any(events.get(key) != "PASS" for key in event_checks):
+        raise ValueError("Missing matching successful EXE ClawBot event simulation evidence")
 
     staging = Path(tempfile.mkdtemp(prefix=stem + "-staging-", dir=output))
     root = staging / stem
@@ -200,7 +204,8 @@ def main() -> int:
         "python": {"version": ".".join(map(str, sys.version_info[:3])), "architecture": "x64"},
         "packager": {"name": "PyInstaller", "version": metadata.version("PyInstaller")},
         "runtime_components": components,
-        "verification": {"existing_local_exe_startup": startup, "other_windows_machines": "NOT_VERIFIED", "real_camera_and_message_delivery": "NOT_VERIFIED"},
+        "verification": {"existing_local_exe_startup": startup, "clawbot_event_simulation": events,
+                         "other_windows_machines": "NOT_VERIFIED", "real_camera_and_message_delivery": "NOT_VERIFIED"},
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     write_json(root / "RELEASE_MANIFEST.json", manifest)
@@ -229,7 +234,7 @@ def main() -> int:
         "archive_sha256": zip_hash, "checksum_file": checksum.name, "members": member_count,
         "exe_sha256": original_hash, "exe_bytes_unchanged": True,
         "zip_testzip": "PASS", "x64_pe": "PASS", "private_state_and_path_check": "PASS",
-        "existing_exe_startup_evidence": "PASS", "new_feature_tests_run": False,
+        "existing_exe_startup_evidence": "PASS", "new_feature_tests_run": True,
         "third_party_sources_doc_included": (root / "THIRD_PARTY_SOURCES.md").is_file(),
         "ffmpeg_build_configuration_included": (root / "THIRD_PARTY_NOTICES" / "FFmpeg" / "BUILD_CONFIGURATION.txt").is_file(),
         "staging_directory": staging.name,

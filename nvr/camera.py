@@ -378,15 +378,19 @@ class Cam(threading.Thread):
                                                         default=10) or 10),
                              transcode=self.rec_transcode)
             import subprocess
+            # FFmpeg can create its output before popen returns. Register the
+            # path first so event queries cannot mistake that file for finished.
+            self.rec_path = p
             self.rec_proc = popen(cmd, stdin=subprocess.PIPE,
                                   stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL)
-            self.rec_path = p
             self.rec_t0 = time.time()
             self.log("[事件] %s 检测到人 → 开始录像" % self.name)
         except Exception as e:
-            self.log("[事件] %s 启动录像失败: %s" % (self.name, redact_urls(e)))
             self.rec_proc = None
+            self.rec_path = ""
+            self.rec_t0 = 0.0
+            self.log("[事件] %s 启动录像失败: %s" % (self.name, redact_urls(e)))
 
     def stop_record(self):
         with self._rec_lock:

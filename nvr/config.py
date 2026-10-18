@@ -110,7 +110,7 @@ _DEFAULTS = {
         "timeout": 5,
     },
 
-    # 微信 ClawBot 插件（腾讯 iLink 协议）：客户在微信里对话→回抽帧录像
+    # 微信 ClawBot 插件（腾讯 iLink 协议）：用户在微信里查询抽帧或已结束事件录像
     "clawbot": {
         "enabled": False,
         "bot_type": 3,          # 扫码登录的 bot_type，原实现取 3，以实际服务为准
