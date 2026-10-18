@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>轻量录像机</title>
+<style>
+:root{
+  --bg:#FCFAF4; --card:#FFFDF8; --line:#E7DFCF; --txt:#4A4032; --txt2:#7A6E5C;
+  --txt3:#A2977F; --side:#2B2419; --gold:#D99B2B; --green:#5B8C51;
+  --red:#C0553B; --amber:#C9862B;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--txt);
+  font:14px/1.6 "PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:18px;padding:0 18px;height:52px;
+  background:var(--side);color:#F3EDE0}
+header .brand{font-weight:700;letter-spacing:.5px}
+header nav{display:flex;gap:6px}
+header nav button{background:transparent;border:0;color:#CFC5B0;padding:7px 14px;
+  border-radius:8px;cursor:pointer;font-size:14px}
+header nav button.on{background:var(--gold);color:#241C0E;font-weight:600}
+header .meta{margin-left:auto;font-size:12px;color:#9C9179}
+main{padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:14px;margin-bottom:14px}
+.card h3{margin:0 0 10px;font-size:15px;color:var(--txt)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+label{display:block;font-size:12px;color:var(--txt2);margin-bottom:4px}
+.inp,select{background:#fff;border:1px solid var(--line);border-radius:8px;
+  padding:7px 10px;color:var(--txt);font-size:13px;min-width:120px;outline:none}
+.inp:focus,select:focus{border-color:var(--gold)}
+button{background:var(--gold);border:0;color:#241C0E;padding:8px 16px;
+  border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.line{background:transparent;border:1px solid var(--line);color:var(--txt2);font-weight:500}
+button.danger{background:var(--red);color:#fff}
+.hint{font-size:12px;color:var(--txt3);margin-top:6px}
+/* 视频墙 */
+.wall{display:grid;gap:10px}
+.wall.c1{grid-template-columns:1fr}.wall.c2{grid-template-columns:repeat(2,1fr)}
+.wall.c3{grid-template-columns:repeat(3,1fr)}.wall.c4{grid-template-columns:repeat(4,1fr)}
+.cell{position:relative;background:#1A1712;border-radius:10px;overflow:hidden;
+  aspect-ratio:16/9}
+.cell img{width:100%;height:100%;object-fit:cover;display:block;background:#1A1712}
+.cell .bar{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;
+  align-items:center;padding:6px 8px;background:linear-gradient(transparent,rgba(0,0,0,.65));
+  color:#fff;font-size:12px}
+.tag{padding:2px 7px;border-radius:6px;font-size:11px;background:#00000055}
+.tag.on{background:var(--green)}.tag.off{background:var(--red)}
+.tag.warn{background:var(--amber);color:#241C0E}.tag.human{background:var(--gold);color:#241C0E}
+.empty{padding:40px;text-align:center;color:var(--txt3)}
+/* 表格 */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--txt2);font-weight:600;font-size:12px}
+.switch{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}
+.switch input{width:16px;height:16px;accent-color:var(--gold)}
+/* toast */
+#toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);
+  background:var(--side);color:#F3EDE0;padding:10px 18px;border-radius:10px;
+  opacity:0;transition:.25s;pointer-events:none;font-size:13px;z-index:99}
+#toast.show{opacity:1}
+.prog{height:6px;background:#EFE7D6;border-radius:4px;overflow:hidden;margin:8px 0}
+.prog i{display:block;height:100%;width:0;background:var(--gold);transition:.3s}
+.scan-item{display:flex;justify-content:space-between;align-items:center;
+  padding:7px 10px;border-bottom:1px solid var(--line);font-size:13px}
+/* 回放 */
+.rec-wrap{display:grid;grid-template-columns:340px 1fr;gap:14px;align-items:start}
+.rec-list.card{max-height:72vh;overflow:auto;padding:0}
+.rec-list .grp{padding:6px 12px;font-size:12px;color:var(--txt2);background:#FBF7EE;
+  position:sticky;top:0;border-bottom:1px solid var(--line)}
+.rec-list .it{padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--line)}
+.rec-list .it:hover{background:#FBF7EE}
+.rec-list .it.on{background:#F3E7CF}
+.rec-list .it .t{font-size:13px;color:var(--txt)}
+.rec-list .it .s{font-size:11px;color:var(--txt3);margin-top:3px}
+.rec-player video{width:100%;border-radius:10px;background:#000;display:block}
+.tag.tl{background:var(--green);color:#fff}
+@media(max-width:760px){.rec-wrap{grid-template-columns:1fr}}
+#authPanel{position:fixed;inset:0;background:#211b18dd;z-index:100;
+  display:flex;align-items:center;justify-content:center;padding:20px}
+#authPanel[hidden]{display:none}
+#authForm{width:min(400px,100%)}
+</style>
+</head>
+<body>
+<div id="authPanel" hidden>
+  <form id="authForm" class="card">
+    <h3>登录录像机</h3>
+    <label for="authToken">访问口令</label>
+    <input class="inp" id="authToken" type="password" autocomplete="current-password" required style="width:100%">
+    <p id="authError" class="hint">请输入本机设置的访问口令。</p>
+    <button type="submit">登录</button>
+  </form>
+</div>
+<header>
+  <div class="brand" id="siteName">轻量录像机</div>
+  <nav>
+    <button data-tab="wall" class="on">预览</button>
+    <button data-tab="cams">摄像头</button>
+    <button data-tab="rec">回放</button>
+    <button data-tab="set">设置</button>
+  </nav>
+  <div class="meta"><span id="mMem"></span> · <span id="mVer"></span></div>
+</header>
+
+<main>
+  <!-- ============ 预览 ============ -->
+  <section id="tab-wall">
+    <div class="card">
+      <div class="row" style="margin:0">
+        <div><label>布局</label>
+          <select id="wallCols">
+            <option value="1">1 列</option><option value="2" selected>2 列</option>
+            <option value="3">3 列</option><option value="4">4 列</option>
+          </select></div>
+        <div class="hint" style="margin:0 0 8px">预览、检测与抽帧共用画面；流畅度取决于摄像头、网络和电脑性能。</div>
+      </div>
+    </div>
+    <div id="wall" class="wall c2"></div>
+  </section>
+
+  <!-- ============ 摄像头 ============ -->
+  <section id="tab-cams" hidden>
+    <div class="card">
+      <h3>扫描本网段</h3>
+      <div class="row">
+        <div style="flex:2 1 220px"><label>IP 范围（留空 = 自动识别本机网段）</label>
+          <input class="inp" id="scRange" style="width:100%" placeholder="例如 192.168.1.1-254"></div>
+        <div><label>端口</label><input class="inp" id="scPort" value="554" style="width:90px"></div>
+        <div><label>用户名</label><input class="inp" id="scUsers" value="admin" style="width:110px"></div>
+        <div style="flex:2 1 200px"><label>密码（逗号分隔）</label><input class="inp" type="password" id="scPwds" autocomplete="off" style="width:100%"></div>
+        <div><button id="btnScan">开始扫描</button></div>
+        <div><button id="btnScanStop" class="line" disabled>停止</button></div>
+      </div>
+      <div class="prog"><i id="scProg"></i></div>
+      <div class="hint" id="scHint">先探端口，再对存活主机用 ffmpeg 实测每条 RTSP 路径 × 账号密码（自动处理 Digest 认证）。</div>
+      <div class="hint" id="scSub"></div>
+      <div id="scResult"></div>
+      <div class="card" style="margin-top:10px;background:#FBF7EE">
+        <div style="font-size:12px;color:var(--txt2);margin-bottom:6px">扫描日志</div>
+        <div id="scLog" style="font:12px/1.7 ui-monospace,Menlo,Consolas,monospace;color:var(--txt2);max-height:160px;overflow:auto"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>摄像头</h3>
+      <table>
+        <thead><tr><th>名称</th><th>地址</th><th>状态</th><th>识别人</th><th>操作</th></tr></thead>
+        <tbody id="camList"></tbody>
+      </table>
+      <div class="row" style="margin-top:12px">
+        <div style="flex:1 1 160px"><label>名称</label><input class="inp" id="cfName" style="width:100%"></div>
+        <div style="flex:3 1 320px"><label>RTSP 地址</label>
+          <input class="inp" id="cfUrl" style="width:100%" placeholder="rtsp://admin:123456@192.168.1.64:554/av0_1"></div>
+        <div><button id="btnAdd">添加</button></div>
+      </div>
+      <div class="hint">添加后会自动挑这台摄像头分辨率最小的那条码流常驻（省 CPU），
+        事件录像优先封装高清码流，编码不兼容时需要转码。</div>
+    </div>
+  </section>
+
+  <!-- ============ 回放 ============ -->
+  <section id="tab-rec" hidden>
+    <div class="card">
+      <div class="row" style="margin:0">
+        <div><label>摄像头</label>
+          <select id="pbCam" class="inp"><option value="">全部</option></select></div>
+        <div><label>类型</label>
+          <select id="pbType" class="inp">
+            <option value="">全部</option>
+            <option value="event">事件录像</option>
+            <option value="timelapse">抽帧录像</option>
+          </select></div>
+        <div><button id="pbRefresh">刷新</button></div>
+        <div class="hint" style="margin:0 0 8px">只列出已生成完的录像；正在写入中的不会显示。</div>
+      </div>
+    </div>
+    <div class="rec-wrap">
+      <div class="rec-list card" id="pbList"></div>
+      <div class="rec-player card">
+        <video id="pbVideo" controls preload="auto" playsinline></video>
+        <div id="pbInfo" class="hint" style="padding:8px 4px">从左侧选择一段录像开始播放</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 设置 ============ -->
+  <section id="tab-set" hidden>
+    <div class="card">
+      <h3>访问口令</h3>
+      <label for="accessToken">设置或更换口令（留空保持原值）</label>
+      <input class="inp" id="accessToken" type="password" autocomplete="new-password" style="width:100%;max-width:400px">
+      <div class="hint">默认只允许本机访问。启用局域网访问前请设置口令；更换口令后其他浏览器需要重新登录。</div>
+    </div>
+    <div class="card">
+      <h3>取流</h3>
+      <div class="row">
+        <div><label>取流帧率</label><input class="inp" id="stFps" type="number" min="1" max="25" style="width:90px"></div>
+        <div><label>取流宽度</label><input class="inp" id="stWidth" type="number" min="240" max="1280" step="80" style="width:100px"></div>
+        <div><label>传输</label><select id="stTransport"><option value="tcp">TCP</option><option value="udp">UDP</option></select></div>
+        <div><label>断线重连(秒起)</label><input class="inp" id="stRetry" type="number" min="1" style="width:90px"></div>
+      </div>
+      <div class="hint">帧率、分辨率、编码和路数都会影响资源占用，建议先用一路验证后逐步增加。</div>
+    </div>
+
+    <div class="card">
+      <h3>人形检测</h3>
+      <div class="row">
+        <div><label class="switch"><input type="checkbox" id="dtEn"><span>启用检测</span></label></div>
+        <div><label>模式</label><select id="dtMode">
+          <option value="auto">自动（Haar 优先）</option>
+          <option value="haar">仅 Haar</option>
+          <option value="motion">仅移动侦测（最省）</option></select></div>
+        <div><label>检测间隔(秒)</label><input class="inp" id="dtInt" type="number" step="0.1" min="0.1" style="width:90px"></div>
+        <div><label>连续命中次数</label><input class="inp" id="dtConfirm" type="number" min="1" style="width:90px"></div>
+        <div><label>人离开(秒)停录</label><input class="inp" id="dtGone" type="number" min="1" style="width:90px"></div>
+      </div>
+      <div class="hint">各路检测依次执行；增加摄像头仍会增加取流与整体资源消耗。
+        事件检测触发录像；抽帧按设定间隔单独保存。Haar 或移动侦测需要按实际现场验证效果。</div>
+    </div>
+
+    <div class="card">
+      <h3>录像</h3>
+      <div class="row">
+        <div><label>抽帧间隔(秒)</label><input class="inp" id="rdTl" type="number" min="10" style="width:110px"></div>
+        <div><label>保留天数</label><input class="inp" id="rdKeep" type="number" min="1" style="width:90px"></div>
+        <div><label>单次事件上限(分钟)</label><input class="inp" id="rdMax" type="number" min="1" style="width:110px"></div>
+      </div>
+      <div class="hint">默认 720 秒 1 帧 → 全天 120 帧 = 2 分钟视频。</div>
+    </div>
+
+    <div class="card">
+      <h3>邮件推送</h3>
+      <div class="row">
+        <div><label class="switch"><input type="checkbox" id="mlEn"><span>每天定时推送</span></label></div>
+        <div><label>推送时刻</label><input class="inp" id="mlTime" placeholder="08:00" style="width:100px"></div>
+        <div><label>SMTP 服务器</label><input class="inp" id="mlHost" style="width:160px"></div>
+        <div><label>端口</label><input class="inp" id="mlPort" type="number" style="width:90px"></div>
+      </div>
+      <div class="row">
+        <div style="flex:1 1 200px"><label>邮箱账号</label><input class="inp" id="mlUser" style="width:100%"></div>
+        <div style="flex:1 1 180px"><label>授权码 / 密码</label><input class="inp" id="mlPass" type="password" style="width:100%"></div>
+        <div style="flex:1 1 200px"><label>收件人（逗号分隔）</label><input class="inp" id="mlTo" style="width:100%"></div>
+        <div><button id="btnMailTest" class="line">发测试邮件</button></div>
+      </div>
+      <div class="hint">每天在指定时刻把<b>前一天</b>各路的全天抽帧视频（约 2 分钟）作为附件发出。
+        QQ 邮箱请填「授权码」而不是登录密码。</div>
+    </div>
+
+    <div class="card">
+      <h3>微信 ClawBot（客户对话取录像）</h3>
+      <div class="row">
+        <div><label class="switch"><input type="checkbox" id="cbEn"><span>启用</span></label></div>
+        <div><label class="switch"><input type="checkbox" id="cbAuto"><span>已登录时自动接消息</span></label></div>
+        <div><label>单个视频上限(MB)</label><input class="inp" id="cbMaxMb" type="number" style="width:90px"></div>
+        <div><button id="cbLogin">扫码登录</button></div>
+        <div><button id="cbLogout" class="line">退出登录</button></div>
+      </div>
+      <div id="cbBox" style="display:none;margin-top:10px">
+        <div style="display:flex;gap:14px;align-items:center">
+          <img id="cbQr" alt="微信登录二维码"
+               style="width:168px;height:168px;background:#fff;border:1px solid var(--line);border-radius:10px">
+          <div style="flex:1">
+            <div class="hint" id="cbHint" style="margin:0 0 6px"></div>
+            <div class="hint" style="margin:0">用手机微信扫左边二维码；二维码显示不出来就点
+              <a id="cbLink" href="#" target="_blank" rel="noreferrer">这个链接</a> 在微信里打开。</div>
+          </div>
+        </div>
+      </div>
+      <div class="hint" id="cbState"></div>
+      <div class="hint">
+        微信功能为可选集成，默认关闭，需要自行扫码授权并验证真实收发。
+        仅登录所有者和明确授权的用户可以请求录像。
+        支持「昨天」「前天」「2026-09-26」「昨天 农场」等指令。
+        每日自动发送可使用邮件推送；实际登录有效期和可用性以服务返回为准。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin:0">
+        <div><button id="btnSave">保存设置</button></div>
+        <div><button id="btnQuit" class="danger">退出程序</button></div>
+        <div class="hint" style="margin:0 0 8px">所有设置存在 config.json，改一次永久记住。</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
