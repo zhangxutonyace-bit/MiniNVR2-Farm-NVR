@@ -48,3 +48,7 @@ SHA-256：`D2CE9323892093C16172B30E0203746B7681B4C639C0D109783B81AFE12B265A`。
 完整本机证据保存在被忽略的 `validation-local/`：`tests.txt`、`startup-source.json`、`startup-exe.json`、构建日志与演示运行日志。此目录不提交到 GitHub。
 
 独立程序大小：135,455,776 字节。SHA-256：`a42b0d36c07240a189ae44cddffa02bb3ff36da56f64720ead8f5d4730da1b2d`。包内含 FFmpeg 和 17 份 Haar XML。进程验收采用无托盘模式；托盘菜单的人工点击及其他电脑兼容性尚未验收。
+
+## Windows Release 分发
+
+Windows v2.2.1 便携包复用上方已验收的同一 EXE，二进制 SHA-256 保持不变。下载包额外包含中文运行说明、第三方许可与来源资料；GitHub 下载资产及完整包校验值以 [v2.2.1 Release](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v2.2.1) 的 `SHA256SUMS.txt` 为准。

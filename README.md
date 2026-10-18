@@ -1,5 +1,9 @@
 # MiniNVR2 农场轻量录像机
 
+**[下载 Windows 64 位便携版](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v2.2.1/MiniNVR2-v2.2.1-windows-x64.zip)** · [查看 Release 与校验文件](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v2.2.1)
+
+完整解压后双击 `MiniNVR2.exe` 即可运行，无需安装 Python。首次使用方法见 [Windows 下载与运行说明](docs/WINDOWS_DOWNLOAD.md)。
+
 **MiniNVR2｜让旧摄像头和闲置笔记本，重新发挥价值**
 
 农场、养殖场和小型场地的监控需求，往往并不复杂：平时看看现场，有活动时留下录像，需要时能快速回顾。
@@ -46,7 +50,7 @@ MiniNVR2 希望用更轻量的方式解决这些问题：**复用现有摄像头
 
 检测采用传统视觉算法，可能漏检或误报；它不等于经过农场现场验证的人员识别，也不提供防入侵或事故报警保证。
 
-## Windows 快速开始
+## 从源码运行
 
 已验证环境：Windows x64、Python 3.12.10。先安装 Python 3.12 64 位，然后在本目录运行：
 
@@ -116,4 +120,4 @@ build/build_exe.py       可移植的 EXE 打包入口
 docs/VALIDATION.md      验证范围与来源记录
 ```
 
-FFmpeg 由 `imageio-ffmpeg` 运行依赖提供；Haar 模型来自 OpenCV 包。源码包未附带真实录像、账户配置或旧 EXE。当前未附加新的开源许可证；第三方组件遵循各自许可证。后续若分发二进制，需要同时整理相应第三方许可与通知文件。
+FFmpeg 由 `imageio-ffmpeg` 运行依赖提供；Haar 模型来自 OpenCV 包。源码包未附带真实录像、账户配置或旧 EXE。当前未附加新的开源许可证；第三方组件遵循各自许可证。Windows 下载包随附第三方许可与通知，源码来源资料见 [第三方组件来源](docs/THIRD_PARTY_SOURCES.md)。
