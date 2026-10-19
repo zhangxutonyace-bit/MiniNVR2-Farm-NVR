@@ -95,13 +95,19 @@ v2.2.3 新增微信指定摄像头的单路预览链接，只面向同一 Wi-Fi�
 - 首次手机打开显示失效；重新请求并立即打开新链接后成功。未取得旧页具体错误码，原始失效原因仍为未知，不推定为过期或代理丢失认证头。
 - 安装、账号登录和本机专用组的 Peer Expose 由用户授权；服务商会处理经其 HTTPS 代理转发的画面。没有配置整个局域网或管理端口的外网映射。
 
-本机证据保存在忽略目录：`netbird-remote-activation.json`、`installed-netbird-public-smoke.json`、`live-remote-preview-v2.3.0.json`。当前只覆盖此次电脑、微信账号、手机、移动网络与合成画面；真实摄像头、其他运营商、长期运行及自动恢复未验收。v2.3.0 尚未公开发布，公开下载仍为 v2.2.3。
+本机证据保存在忽略目录：`netbird-remote-activation.json`、`installed-netbird-public-smoke.json`、`live-remote-preview-v2.3.0.json`。此为早期候选版检查点，只覆盖当次电脑、微信账号、手机、移动网络与合成画面；真实摄像头、其他运营商、长期运行及自动恢复未验收。后续最终 EXE 的微信内点击验收及发布范围见下文。
 
 后续“微信内直接点击”第一轮测试使用独立纯网址回复的 Windows 候选 EXE，SHA-256 为 `fb5c1b29457643d2fab39431b18bcfc7e5f08423720d104934ed4729744e6d5d`；用户确认网址仍不可点击。第二轮临时源码诊断版改为显式 Markdown 链接 `[打开实时预览](原始网址)`，164 项离线检查、源码进程模拟预览 10 项检查通过。2026-10-19，用户在当前手机移动网络下确认微信内可点击且画面持续更新。
 
 随后重新构建、安装最终 Windows EXE，大小 135,516,039 字节，SHA-256：`1a91c7c89fb0a7747213bd208e6ea385f0ec20ce509976d73b2e5bb0dc770443`。同一 EXE 通过 6 项启动、10 项模拟预览、4 项模拟事件检查。用户在手机移动数据下重新发送 `预览 外网测试画面`，点击新回复的“打开实时预览”，再次明确确认“能，点击后在微信内持续更新”。此为最终 EXE 的真实微信内点击验收，证据单独保存于忽略目录 `live-wechat-clickable-exe-v2.3.0.json`，没有借用源码版或旧 EXE 的手机结果。
 
-最终结果只覆盖此次电脑、扫码账号、手机、当前移动网络和合成动画。临时中转已关闭，合成测试摄像头已移除，原摄像头和微信配置保留；真实摄像头、其他账号与网络及长期稳定性未验收。构建与进程记录为 `build-markdown-link-v2.3.0.json`、`startup-exe-markdown-v2.3.0.json`、`preview-exe-markdown-v2.3.0.json`、`event-exe-markdown-v2.3.0.json`、`installed-markdown-v2.3.0.json`。v2.3.0 尚未更新到公开 GitHub Release。
+最终结果只覆盖此次电脑、扫码账号、手机、当前移动网络和合成动画。临时中转已关闭，合成测试摄像头已移除，原摄像头和微信配置保留；真实摄像头、其他账号与网络及长期稳定性未验收。构建与进程记录为 `build-markdown-link-v2.3.0.json`、`startup-exe-markdown-v2.3.0.json`、`preview-exe-markdown-v2.3.0.json`、`event-exe-markdown-v2.3.0.json`、`installed-markdown-v2.3.0.json`。
+
+## v2.3.0 Windows 分发
+
+v2.3.0 沿用上述同一最终 EXE，未为发布重新构建。包内新增 `微信远程预览-操作步骤.txt`，四份中文指南均采用 UTF-8 BOM 和 Windows 换行；第三方许可及来源资料保留，NetBird 由用户从官网另行安装，不内置分发。打包器新增 9 项离线检查，保持旧版局域网验收兼容，并对本版严格核对同一已安装 EXE、移动网络、微信内点击、持续更新及合成素材的真实用户收据。旧版或源码版收据不能代替本版 EXE 手机验收。
+
+下载包与校验值见 [v2.3.0 Release](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v2.3.0)。发布清单保留“真实摄像头、其他电脑和网络未验证”的边界；个人配置、会话、日志与录像排除在包外。既有 v2.2.3 及更早版本保留。
 
 ## Windows Release 分发
 

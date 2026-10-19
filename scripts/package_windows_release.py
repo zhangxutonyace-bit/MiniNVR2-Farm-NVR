@@ -30,6 +30,9 @@ PREVIEW_CHECKS = ("http_startup", "management_anonymous_protection", "synthetic_
                   "preview_assets", "camera_scoped_capability", "lan_live_jpeg",
                   "missing_and_wrong_camera_denied", "preview_routes_isolated", "web_quit",
                   "preview_listener_closed")
+REMOTE_PHONE_CHECKS = ("phone_on_final_exe_verified", "phone_direct_click_verified",
+                       "wechat_embedded_browser_verified", "phone_mobile_data_test_flow",
+                       "synthetic_only")
 
 
 def sha256(path: Path) -> str:
@@ -99,7 +102,7 @@ def validate_automatic(record: dict, version: str, checks: tuple[str, ...], labe
     return public
 
 
-def validate_phone(record: dict, version: str, digest: str) -> dict:
+def validate_phone(record: dict, version: str, digest: str, size: int | None = None) -> dict:
     if record.get("version") != version or record.get("exe_sha256") != digest \
             or record.get("phone_on_final_exe_verified") is not True:
         raise ValueError("Missing user-confirmed phone preview evidence for this exact EXE")
@@ -111,6 +114,21 @@ def validate_phone(record: dict, version: str, digest: str) -> dict:
     except ValueError as error:
         raise ValueError("Phone preview evidence has an invalid verification date") from error
     command = record.get("verified_command")
+    if tuple(map(int, version.split("."))) >= (2, 3, 0):
+        if record.get("mode") != "installed-windows-exe" \
+                or type(record.get("exe_bytes")) is not int or record["exe_bytes"] != size \
+                or any(record.get(key) is not True for key in REMOTE_PHONE_CHECKS):
+            raise ValueError("Remote preview requires mobile-data, direct-click WeChat acceptance for this installed EXE")
+        if not isinstance(command, str) or len(command) > 128 or not command.isprintable() \
+                or not (re.fullmatch(r"预览(?:[1-9][0-9]*号)?", command)
+                        or (command.startswith("预览 ") and len(command) > 3
+                            and command[3:] == command[3:].strip())):
+            raise ValueError("Remote preview evidence requires a supported preview command")
+        return {"status": "PASS_USER_CONFIRMED", "verified_date": verified_date, "command": command,
+                "mode": "installed-windows-exe", "synthetic_only": True,
+                "phone_mobile_data_test_flow": True, "phone_direct_click_verified": True,
+                "wechat_embedded_browser_verified": True,
+                "scope": "One user-confirmed phone on mobile data; direct click in WeChat's embedded browser; continuously updating synthetic preview from this release EXE"}
     if not isinstance(command, str) or not re.fullmatch(r"预览(?:[1-9][0-9]*号)?", command):
         raise ValueError("Phone preview evidence requires a supported numbered preview command")
     return {"status": "PASS_USER_CONFIRMED", "verified_date": verified_date, "command": command,
@@ -118,9 +136,23 @@ def validate_phone(record: dict, version: str, digest: str) -> dict:
 
 
 def write_windows_guide(source: Path, target: Path) -> None:
+    if source.is_symlink() or not source.is_file():
+        raise ValueError("Release guide must be an ordinary file: " + source.name)
     guide = source.read_text(encoding="utf-8-sig")
     # BOM and CRLF keep standalone Chinese guides readable in Notepad.
     target.write_bytes(b"\xef\xbb\xbf" + guide.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
+
+
+def copy_user_guides(root: Path, version: str, include_preview: bool = False) -> list[str]:
+    guides = [("WINDOWS_DOWNLOAD.md", "先读我-使用说明.txt"),
+              ("WECHAT_QUICK_START.txt", "微信ClawBot-操作步骤.txt")]
+    if tuple(map(int, version.split("."))) >= (2, 2, 3) or include_preview:
+        guides.append(("LAN_PREVIEW_QUICK_START.txt", "微信局域网预览-操作步骤.txt"))
+    if tuple(map(int, version.split("."))) >= (2, 3, 0):
+        guides.append(("REMOTE_PREVIEW.md", "微信远程预览-操作步骤.txt"))
+    for source, target in guides:
+        write_windows_guide(REPO / "docs" / source, root / target)
+    return [target for _, target in guides]
 
 
 def checked_copy(source: Path, target: Path) -> None:
@@ -253,6 +285,7 @@ def main() -> int:
     if sys.version_info[:3] != (3, 12, 10) or struct.calcsize("P") != 8:
         raise ValueError("Use the verified Python 3.12.10 x64 build environment")
     preview_release = tuple(map(int, args.version.split("."))) >= (2, 2, 3)
+    remote_release = tuple(map(int, args.version.split("."))) >= (2, 3, 0)
     if preview_release and (args.preview_record is None or args.phone_record is None):
         raise ValueError("Preview releases require --preview-record and --phone-record")
     output = args.output_dir.resolve()
@@ -264,7 +297,8 @@ def main() -> int:
     original_hash = sha256(executable)
     original_size = executable.stat().st_size
     validate_build(read_record(args.build_record), args.version, original_hash, original_size)
-    startup = validate_automatic(read_record(args.startup_record), args.version, STARTUP_CHECKS, "startup",
+    startup_checks = STARTUP_CHECKS + (("remote_preview_default_off",) if remote_release else ())
+    startup = validate_automatic(read_record(args.startup_record), args.version, startup_checks, "startup",
                                  original_hash, original_size)
     event_path = args.event_record or REPO / "validation-local" / ("event-exe-v" + args.version + ".json")
     events = validate_automatic(read_record(event_path), args.version, EVENT_CHECKS, "ClawBot event simulation",
@@ -275,18 +309,13 @@ def main() -> int:
                                      original_hash, original_size)
     phone_preview = {"status": "NOT_VERIFIED"}
     if args.phone_record is not None:
-        phone_preview = validate_phone(read_record(args.phone_record), args.version, original_hash)
+        phone_preview = validate_phone(read_record(args.phone_record), args.version, original_hash, original_size)
 
     staging = Path(tempfile.mkdtemp(prefix=stem + "-staging-", dir=output))
     root = staging / stem
     root.mkdir()
     checked_copy(executable, root / "MiniNVR2.exe")
-    checked_copy(REPO / "docs" / "WINDOWS_DOWNLOAD.md", root / "先读我-使用说明.txt")
-    write_windows_guide(REPO / "docs" / "WECHAT_QUICK_START.txt", root / "微信ClawBot-操作步骤.txt")
-    guides = ["先读我-使用说明.txt", "微信ClawBot-操作步骤.txt"]
-    if preview_release or args.preview_record is not None:
-        write_windows_guide(REPO / "docs" / "LAN_PREVIEW_QUICK_START.txt", root / "微信局域网预览-操作步骤.txt")
-        guides.append("微信局域网预览-操作步骤.txt")
+    guides = copy_user_guides(root, args.version, include_preview=args.preview_record is not None)
     components = collect_notices(root, REPO / "validation-local" / "release-inputs")
     (root / "THIRD_PARTY_NOTICES" / "README.txt").write_text(
         "Third-party notices for MiniNVR2 " + args.version + " Windows x64\n\n"
@@ -311,6 +340,7 @@ def main() -> int:
                              "command": live["verified_command"],
                              "synthetic_video_seconds": live["event"]["seconds"],
                              "scope": "One scanned account and handset; synthetic event video"}
+    phone_verification_key = "real_phone_remote_preview" if remote_release else "real_phone_lan_preview"
     manifest = {
         "application": "MiniNVR2", "version": args.version, "target": "Windows 10/11 x64",
         "source_commit": commit_id(),
@@ -320,7 +350,7 @@ def main() -> int:
         "runtime_components": components,
         "user_guides": guides,
         "verification": {"existing_local_exe_startup": startup, "clawbot_event_simulation": events,
-                         "lan_preview_simulation": preview, "real_phone_lan_preview": phone_preview,
+                         "lan_preview_simulation": preview, phone_verification_key: phone_preview,
                          "real_wechat_event_delivery": live_delivery,
                          "other_windows_machines": "NOT_VERIFIED", "real_camera": "NOT_VERIFIED"},
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -353,10 +383,11 @@ def main() -> int:
         "zip_testzip": "PASS", "x64_pe": "PASS", "private_state_and_path_check": "PASS",
         "existing_exe_startup_evidence": "PASS", "existing_event_simulation_evidence": "PASS",
         "existing_preview_simulation_evidence": "PASS" if args.preview_record is not None else "NOT_VERIFIED",
-        "real_phone_lan_preview": phone_preview,
+        phone_verification_key: phone_preview,
         "new_feature_tests_run": False,
         "wechat_quick_start_included": (root / "微信ClawBot-操作步骤.txt").is_file(),
         "lan_preview_quick_start_included": (root / "微信局域网预览-操作步骤.txt").is_file(),
+        "remote_preview_quick_start_included": (root / "微信远程预览-操作步骤.txt").is_file(),
         "third_party_sources_doc_included": (root / "THIRD_PARTY_SOURCES.md").is_file(),
         "ffmpeg_build_configuration_included": (root / "THIRD_PARTY_NOTICES" / "FFmpeg" / "BUILD_CONFIGURATION.txt").is_file(),
         "staging_directory": staging.name,
