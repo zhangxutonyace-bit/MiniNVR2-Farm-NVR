@@ -75,7 +75,7 @@
   }
 
   function failure(response) {
-    let message = "无法获取当前画面，请检查电脑与手机的 Wi-Fi 连接。";
+    let message = "无法获取当前画面，请检查电脑和手机的网络连接。";
     if (response.data && typeof response.data.msg === "string") message = response.data.msg;
     if ([401, 403, 410].includes(response.status)) {
       finish(message);
@@ -135,7 +135,7 @@
     } catch (_) {
       if (!stopped && !document.hidden) {
         clearPicture("连接已中断");
-        show("无法连接电脑。请确认处于同一 Wi-Fi、电脑预览仍开启，且未被防火墙拦截。", true);
+        show("无法连接电脑。远程链接请确认电脑的远程预览仍开启；局域网链接请保持同一 Wi-Fi。也可回微信重新获取链接。", true);
         retry.hidden = false;
       }
     } finally {
@@ -172,7 +172,7 @@
   setInterval(() => {
     if (stopped || expired() || !deadline) return;
     const seconds = Math.max(0, Math.ceil((deadline - performance.now()) / 1000));
-    expiry.textContent = "链接剩余 " + Math.floor(seconds / 60) + " 分 " + (seconds % 60) + " 秒 · 同一 Wi-Fi 可查看";
+    expiry.textContent = "链接剩余 " + Math.floor(seconds / 60) + " 分 " + (seconds % 60) + " 秒 · 请勿转发";
   }, 1000);
 
   if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) {

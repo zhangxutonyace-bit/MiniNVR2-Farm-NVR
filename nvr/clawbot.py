@@ -505,7 +505,7 @@ class ClawBot(threading.Thread):
 
     HELP = (
         "可以直接这样说：\n"
-        "· 预览1号 / 预览 农场 —— 同一Wi-Fi打开该路实时画面\n"
+        "· 预览1号 / 预览 农场 —— 打开该路实时画面（按电脑预览设置连接）\n"
         "· 预览 —— 一路时直接发链接，多路时显示可选项\n"
         "· 今天事件 / 昨天事件 农场 —— 列出已完成事件录像\n"
         "· 事件 2026-10-18 1号 —— 指定日期和摄像头\n"
@@ -792,7 +792,7 @@ class ClawBot(threading.Thread):
                 lines = ["请选择要预览的摄像头："]
                 lines.extend("%d. %s" % (i, c.get("name") or c.get("id"))
                              for i, c in enumerate(cameras, 1))
-                lines.append("请单独发送“预览1号”或“预览 摄像头名称”。手机须与电脑连接同一Wi-Fi。")
+                lines.append("请单独发送“预览1号”或“预览 摄像头名称”。网络条件以电脑预览设置为准。")
                 self.send_text(to, ctx, "\n".join(lines))
                 return True
         else:
@@ -811,7 +811,7 @@ class ClawBot(threading.Thread):
             self.send_text(to, ctx, "未找到指定摄像头或预览命令有误。请发送“列表”，再单独发送“预览1号”或“预览 摄像头名称”。")
             return True
         if self.hub is None or not hasattr(self.hub, "preview_link"):
-            self.send_text(to, ctx, "局域网预览未就绪，请先在电脑设置中启用“微信局域网预览”。")
+            self.send_text(to, ctx, "预览未就绪，请先在电脑设置中配置微信预览。")
             return True
         try:
             link = self.hub.preview_link(camera["id"])
@@ -819,6 +819,9 @@ class ClawBot(threading.Thread):
             self.send_text(to, ctx, "暂时不能生成预览链接：%s" % exc)
             return True
         self.log("[clawbot] 已生成单路预览链接（10分钟有效）")
-        self.send_text(to, ctx, "%s 实时预览\n手机和电脑须连接同一Wi-Fi，链接10分钟有效，请勿转发。\n%s"
-                       % (camera.get("name") or camera["id"], link))
+        remote = self.cfg.get("remote_preview", "enabled", default=False)
+        network = ("远程预览：手机可使用移动网络或其他Wi-Fi，电脑需保持运行和联网。"
+                   if remote else "手机和电脑须连接同一Wi-Fi。")
+        self.send_text(to, ctx, "%s 实时预览\n%s链接10分钟有效，请勿转发。\n%s"
+                       % (camera.get("name") or camera["id"], network, link))
         return True

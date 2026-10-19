@@ -43,6 +43,12 @@ def check(executable=None):
             with opener.open(url, timeout=5) as response:
                 assert response.status == 200 and b"<html" in response.read().lower()
             report["http_startup"] = "PASS"
+            if tuple(int(part) for part in status["version"].split(".")) >= (2, 3, 0):
+                with opener.open(url + "/api/remote-preview", timeout=5) as response:
+                    remote = json.load(response)
+                assert remote["ok"] and remote["state"] == "stopped"
+                assert not remote["enabled"] and not remote["running"] and not remote["url"]
+                report["remote_preview_default_off"] = "PASS"
             # A competing instance must fail, never claim to be ready or stay alive.
             conflict = subprocess.run(args, cwd=ROOT, stdout=subprocess.DEVNULL,
                                       stderr=subprocess.DEVNULL, timeout=40, **flags)

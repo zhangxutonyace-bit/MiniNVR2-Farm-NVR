@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""A separate, camera-only LAN viewer with short-lived capabilities."""
+"""Isolated camera viewers with short-lived, single-camera capabilities."""
 import hashlib
 import ipaddress
 import math
@@ -10,6 +10,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.parse
 from collections import OrderedDict
 
 from flask import Flask, Response, jsonify, request, send_from_directory
@@ -63,6 +64,45 @@ def _bindable_address(address):
         return False
 
 
+def validate_public_origin(value):
+    """Accept only a clean HTTPS origin; this is never a server fetch target."""
+    message = "远程预览地址无效，请停止后重新开启远程预览。"
+    if (not isinstance(value, str) or not value or len(value) > 2048
+            or not value.isascii() or any(char.isspace() for char in value)
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+        raise ValueError(message)
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        host = parsed.hostname or ""
+        port = parsed.port
+        if (parsed.scheme != "https" or parsed.username is not None
+                or parsed.password is not None or not parsed.netloc
+                or parsed.path not in ("", "/") or parsed.query or parsed.fragment
+                or "?" in value or "#" in value or "\\" in value
+                or parsed.netloc.endswith(":")
+                or not host or len(host) > 253 or host.endswith(".")
+                or "." not in host or host == "localhost"
+                or host.endswith((".localhost", ".local"))
+                or any(not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                       for label in host.split("."))
+                or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", host.rsplit(".", 1)[-1])
+                or (port is not None and not 1 <= port <= 65535)):
+            raise ValueError(message)
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            # Numeric browser shorthand (for example 2130706433 or 127.1)
+            # must not be treated as a public DNS name either.
+            if all(label.isdecimal() for label in host.split(".")):
+                raise ValueError(message)
+        else:
+            raise ValueError(message)
+    except (TypeError, ValueError):
+        raise ValueError(message) from None
+    host = host.lower()
+    return "https://" + host + (":" + str(port) if port not in (None, 443) else "")
+
+
 def _web_dir():
     base = getattr(sys, "_MEIPASS", "")
     if base and os.path.isdir(os.path.join(base, "web")):
@@ -86,6 +126,9 @@ class _QuietHandler(WSGIRequestHandler):
 
 
 class PreviewService:
+    _disabled_message = "请先在电脑设置中启用局域网预览。"
+    _unavailable_message = "局域网预览尚未启动，请检查电脑设置。"
+
     def __init__(self, cfg, camera_getter, log=None):
         self.cfg = cfg
         self.camera_getter = camera_getter
@@ -227,11 +270,14 @@ class PreviewService:
             if self._tickets[key]["expires"] <= now:
                 del self._tickets[key]
 
+    def _link_origin(self):
+        return "http://%s:%d" % (self._address, self._port)
+
     def make_link(self, cid):
         self.sync()
         options = self._options()
         if not options["enabled"]:
-            raise ValueError("请先在电脑设置中启用局域网预览。")
+            raise ValueError(self._disabled_message)
         if not self._current_identity()[0]:
             raise ValueError("微信功能已停用，请先在电脑设置中启用。")
         if not isinstance(cid, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", cid):
@@ -240,8 +286,9 @@ class PreviewService:
         if not camera or not camera.get("enabled", True):
             raise ValueError("摄像头不存在或已停用，请重新发送“列表”选择。")
         with self._lock:
-            if not self._running or not self._thread.is_alive():
-                raise ValueError(self._error or "局域网预览尚未启动，请检查电脑设置。")
+            if not self._running or self._thread is None or not self._thread.is_alive():
+                raise ValueError(self._error or self._unavailable_message)
+            origin = self._link_origin()
             now = time.monotonic()
             self._expire(now)
             while len(self._tickets) >= MAX_TICKETS:
@@ -249,7 +296,7 @@ class PreviewService:
             token = secrets.token_urlsafe(32)
             self._tickets[hashlib.sha256(token.encode("ascii")).hexdigest()] = {
                 "cid": cid, "camera": self._camera_key(camera), "expires": now + TOKEN_SECONDS}
-            return "http://%s:%d/preview#t=%s" % (self._address, self._port, token)
+            return "%s/preview#t=%s" % (origin, token)
 
     @staticmethod
     def _error_response(message, status, code):
@@ -316,19 +363,23 @@ class PreviewService:
             return b"", "connecting", 0
         return buf, camera.state, camera.last_ts
 
+    def _source_error(self):
+        address = request.remote_addr or ""
+        try:
+            loopback = ipaddress.IPv4Address(address).is_loopback
+        except (ValueError, TypeError):
+            loopback = False
+        if not (loopback or is_private_ipv4(address)):
+            return self._error_response("此预览仅供同一局域网访问。", 403, "lan_only")
+        return None
+
     def _create_app(self):
         app = Flask("mininvr_lan_preview", static_folder=None)
         app.config["MAX_CONTENT_LENGTH"] = 1024
 
         @app.before_request
         def source_only():
-            address = request.remote_addr or ""
-            try:
-                loopback = ipaddress.IPv4Address(address).is_loopback
-            except (ValueError, TypeError):
-                loopback = False
-            if not (loopback or is_private_ipv4(address)):
-                return self._error_response("此预览仅供同一局域网访问。", 403, "lan_only")
+            return self._source_error()
 
         @app.after_request
         def headers(response):
@@ -385,3 +436,134 @@ class PreviewService:
             return Response(bytes(buf), mimetype="image/jpeg")
 
         return app
+
+
+class RemotePreviewService(PreviewService):
+    """A session-only loopback origin for an explicitly owned HTTPS relay.
+
+    This instance does not discover network addresses, start a relay, or open
+    itself from make_link()/sync(). The controller owns the external process.
+    """
+    _disabled_message = "请先在电脑设置中启用远程预览。"
+    _unavailable_message = "远程预览尚未开启，请在电脑设置中手动开启。"
+
+    def __init__(self, cfg, camera_getter, log=None):
+        self._public_url = ""
+        super().__init__(cfg, camera_getter, log=log)
+        self._port = 0
+
+    def _options(self):
+        enabled = self.cfg.get("remote_preview", "enabled", default=False)
+        if not isinstance(enabled, bool):
+            raise ValueError("远程预览启用状态必须为是或否")
+        return {"enabled": enabled, "address": self._public_url, "port": self._port}
+
+    def _source_error(self):
+        if request.remote_addr != "127.0.0.1":
+            return self._error_response("远程预览入口仅接受本机转发。", 403, "origin_only")
+        return None
+
+    def _start_listener(self, port):
+        # The relay is allowed to forward only this dedicated, loopback origin.
+        server = _ViewerServer("127.0.0.1", 0, self.app, handler=_QuietHandler)
+        thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.2),
+                                  name="nvr-remote-preview-origin", daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            server.server_close()
+            raise
+        return server, thread
+
+    def start_origin(self):
+        with self._lifecycle:
+            self.sync()
+            options = self._options()
+            if not options["enabled"]:
+                raise ValueError(self._disabled_message)
+            with self._lock:
+                if self._running and self._thread is not None and self._thread.is_alive():
+                    return self._port
+            self.stop()
+            try:
+                server, thread = self._start_listener(0)
+            except (OSError, SystemExit):
+                with self._lock:
+                    self._error = "远程预览的本机入口无法启动，请稍后重试。"
+                self.log("[预览] 远程预览本机入口启动失败。")
+                raise ValueError(self._error) from None
+            try:
+                options = self._options()
+                if not options["enabled"]:
+                    raise ValueError(self._disabled_message)
+            except ValueError:
+                self._close_listener(server, thread)
+                raise
+            with self._lock:
+                self._server, self._thread = server, thread
+                self._port = server.server_port
+                self._address = "127.0.0.1"
+                self._running = True
+                self._error = ""
+                self._identity = self._current_identity()
+                self._configuration = self._options_key(self._options())
+            return self._port
+
+    def sync(self):
+        # Only explicit start_origin() may create a listener.
+        with self._lifecycle:
+            try:
+                options = self._options()
+            except ValueError as exc:
+                self.stop()
+                with self._lock:
+                    self._error = str(exc)
+                return
+            if not options["enabled"]:
+                self.stop()
+                return
+            with self._lock:
+                identity = self._current_identity()
+                if identity != self._identity:
+                    self._tickets.clear()
+                    self._identity = identity
+                failed = self._running and (self._thread is None or not self._thread.is_alive())
+            if failed:
+                self.stop()
+                with self._lock:
+                    self._error = "远程预览的本机入口已停止，请重新开启。"
+
+    def set_public_url(self, value):
+        origin = validate_public_origin(value)
+        with self._lifecycle:
+            self.sync()
+            with self._lock:
+                if not self._running or self._thread is None or not self._thread.is_alive():
+                    raise ValueError(self._error or self._unavailable_message)
+                if origin != self._public_url:
+                    self._tickets.clear()
+                    self._public_url = origin
+                    self._configuration = self._options_key(self._options())
+
+    def _link_origin(self):
+        if not self._public_url:
+            raise ValueError("远程连接尚未就绪，请等待电脑设置中显示已连接。")
+        return self._public_url
+
+    def stop(self):
+        with self._lifecycle:
+            super().stop()
+            with self._lock:
+                self._public_url = ""
+                self._address = ""
+                self._port = 0
+                self._configuration = None
+
+    def status(self):
+        self.sync()
+        with self._lock:
+            running = bool(self._running and self._thread is not None and self._thread.is_alive())
+            return {"enabled": self.cfg.get("remote_preview", "enabled", default=False) is True,
+                    "running": running, "address": self._address, "port": self._port,
+                    "base_url": self._public_url if running else "",
+                    "ready": bool(running and self._public_url), "error": self._error}

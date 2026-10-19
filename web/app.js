@@ -308,8 +308,10 @@ function fillSettings(s) {
   $('#pvEn').checked = preview.enabled === true;
   $('#pvAddress').value = preview.address || '';
   $('#pvPort').value = preview.port || 8803;
+  $('#rpEn').checked = (s.remote_preview || {}).enabled === true;
   refreshClawbot();
   refreshPreview();
+  refreshRemotePreview();
 }
 
 $('#btnSave').onclick = function () {
@@ -330,7 +332,8 @@ $('#btnSave').onclick = function () {
     clawbot: { enabled: $('#cbEn').checked, auto_start: $('#cbAuto').checked,
                max_video_mb: +$('#cbMaxMb').value || 50 },
     preview: { enabled: $('#pvEn').checked, address: $('#pvAddress').value.trim(),
-               port: +$('#pvPort').value || 8803 }
+               port: +$('#pvPort').value || 8803 },
+    remote_preview: { enabled: $('#rpEn').checked }
   } }).then(function (r) {
     toast(r.ok ? '已保存并生效' : (r.msg || '失败'), !r.ok);
     if (r.ok) {
@@ -342,6 +345,40 @@ $('#btnSave').onclick = function () {
 
 /* ---------------- 微信 ClawBot ---------------- */
 var cbTimer = null;
+
+function refreshRemotePreview() {
+  api('/api/remote-preview').then(function (p) {
+    var active = p.state === 'starting' || p.state === 'ready';
+    $('#rpStart').disabled = !p.enabled || active;
+    $('#rpStop').disabled = !active;
+    if (!p.enabled) { $('#rpState').textContent = '远程预览未选择；微信使用局域网预览设置。'; return; }
+    if (p.error) { $('#rpState').textContent = '远程预览未就绪：' + p.error; return; }
+    if (p.state === 'ready' && p.running) {
+      $('#rpState').textContent = '远程连接已就绪。请在微信重新发送“预览1号”，使用新回复的 HTTPS 链接；手机可切换到移动网络测试。';
+    } else if (p.state === 'starting') {
+      $('#rpState').textContent = '正在建立远程连接，请稍候…';
+    } else if (!p.installed) {
+      $('#rpState').textContent = '请先在电脑安装并登录官方 NetBird 客户端，再按下方步骤开启 Peer Expose。';
+    } else {
+      $('#rpState').textContent = '已选择远程链接，本次尚未开启连接。确认下方配置后，点击“同意转发并开启远程预览”。';
+    }
+  }).catch(function () { $('#rpState').textContent = '暂时无法读取远程预览状态。'; });
+}
+
+$('#rpStart').onclick = function () {
+  $('#rpStart').disabled = true;
+  api('/api/remote-preview/start', {method: 'POST', json: {confirm_relay: true}}).then(function (r) {
+    if (!r.ok) toast(r.msg || '远程预览无法开启', true);
+    refreshRemotePreview();
+  }).catch(function () { toast('无法连接电脑，请重试。', true); refreshRemotePreview(); });
+};
+$('#rpStop').onclick = function () {
+  $('#rpStop').disabled = true;
+  api('/api/remote-preview/stop', {method: 'POST', json: {}}).then(function (r) {
+    toast(r.ok ? '远程预览已停止，旧链接失效' : (r.msg || '停止失败'), !r.ok);
+    refreshRemotePreview();
+  }).catch(function () { toast('无法连接电脑，请重试。', true); refreshRemotePreview(); });
+};
 
 function refreshPreview() {
   api('/api/preview').then(function (p) {
@@ -429,6 +466,7 @@ function tick() {
     cbSettingsPollAt = Date.now();
     refreshClawbot();
     refreshPreview();
+    refreshRemotePreview();
   }
   api('/api/status').then(function (s) {
     renderWall(s.cams || []);

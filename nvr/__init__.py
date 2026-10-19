@@ -10,4 +10,4 @@ depend on the device, codec, operating system and storage.
 Mail and the experimental iLink adapter are optional and disabled by default.
 See README.md and docs/VALIDATION.md for the verified scope.
 """
-__version__ = "2.2.3"
+__version__ = "2.3.0"

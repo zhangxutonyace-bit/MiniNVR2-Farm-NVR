@@ -60,6 +60,9 @@ _DEFAULTS = {
     # Separate, read-only same-LAN preview; management remains on its own port.
     "preview": {"enabled": False, "address": "", "port": 8803},
 
+    # Preference only: an active remote session is never restored on launch.
+    "remote_preview": {"enabled": False},
+
     "cameras": [],   # [{id,name,url,enabled,detect}]
 
     # 取流：只拉一条小流，一帧三用

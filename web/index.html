@@ -266,6 +266,24 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
       </div>
       <div class="hint">保存后，在微信单独发送“预览1号”或“预览 摄像头名称”，点击回复的链接查看该路画面。手机须与电脑连接同一 Wi-Fi；链接10分钟有效，只允许查看所选摄像头。预览约每秒刷新一帧。</div>
       <div class="hint" id="pvState">局域网预览未开启。</div>
+      <h4 style="margin:18px 0 8px">微信远程预览（手机可用移动网络）</h4>
+      <div class="row">
+        <div><label class="switch"><input type="checkbox" id="rpEn"><span>微信优先使用远程预览链接</span></label></div>
+        <div><button id="rpStart">同意转发并开启远程预览</button></div>
+        <div><button id="rpStop" class="ghost">停止远程预览</button></div>
+      </div>
+      <div class="hint">先勾选并保存设置，再点击开启。画面通过 NetBird 的 HTTPS 代理转发，服务商可处理转发内容；只开放有时限的单摄像头预览，管理页面仍在电脑上。手机无需安装额外应用。每次启动程序后须手动开启，停止后旧链接失效。</div>
+      <div class="hint" id="rpState" role="status" aria-live="polite">远程预览未开启。</div>
+      <details class="hint">
+        <summary>首次配置与使用步骤</summary>
+        <ol>
+          <li>在电脑上从 <a href="https://netbird.io/download" target="_blank" rel="noreferrer">NetBird 官网</a>安装 Windows 客户端，由你注册或登录自己的账号并连接。手机只用微信。</li>
+          <li>在 NetBird 控制台 Settings → Clients 开启 Peer Expose，按需要授权本机所在组。不要映射录像机管理端口或整个局域网。</li>
+          <li>启用微信 ClawBot 并扫码登录，勾选上面的远程选项，保存后点击“同意转发并开启远程预览”。等待状态显示连接就绪。</li>
+          <li>在微信单独发送“预览1号”或“预览 摄像头名称”，打开新回复的 HTTPS 链接。链接10分钟有效，约每秒刷新一帧，请勿转发。</li>
+        </ol>
+        <p>免费档及代理测试版的限制由 NetBird 决定，不保证永久免费或所有网络可达。电脑需保持运行、联网；首次应关闭手机 Wi-Fi，用移动网络验证。选择远程模式但连接未就绪时会提示错误；如需恢复同 Wi-Fi 预览，取消远程选项并保存。</p>
+      </details>
       <div id="cbBox" style="display:none;margin-top:10px">
         <div style="display:flex;gap:14px;align-items:center">
           <img id="cbQr" alt="微信登录二维码"

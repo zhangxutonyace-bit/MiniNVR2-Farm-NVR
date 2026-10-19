@@ -381,7 +381,7 @@ def create_app(cfg, hub, on_quit=None):
 
     # ---------------- 设置 ----------------
     _SEC = ("site", "server", "stream", "detect", "record", "mail", "scan",
-            "clawbot", "preview", "system")
+            "clawbot", "preview", "remote_preview", "system")
     _SECRETS = {"server": ("token",), "mail": ("pass",), "scan": ("pwds",),
                 "clawbot": ("token",)}
 
@@ -399,6 +399,11 @@ def create_app(cfg, hub, on_quit=None):
     @need_auth
     def api_settings_save():
         d = request.get_json(silent=True) or {}
+        if "remote_preview" in d:
+            remote = d["remote_preview"]
+            if (not isinstance(remote, dict) or set(remote) - {"enabled"}
+                    or not isinstance(remote.get("enabled"), bool)):
+                return jsonify({"ok": False, "msg": "远程预览设置只能包含启用状态（是或否）"}), 400
         if "preview" in d:
             from .preview import validate_options
             try:
@@ -437,6 +442,25 @@ def create_app(cfg, hub, on_quit=None):
             return jsonify(dict(hub.preview_status(), ok=True))
         return jsonify({"ok": True, "enabled": False, "running": False,
                         "address": "", "port": 8803, "error": ""})
+
+    @app.route("/api/remote-preview")
+    def api_remote_preview_status():
+        return jsonify(dict(hub.remote_preview_status(), ok=True))
+
+    @app.route("/api/remote-preview/start", methods=["POST"])
+    @need_auth
+    def api_remote_preview_start():
+        if request.get_json().get("confirm_relay") is not True:
+            return jsonify({"ok": False, "msg": "请先确认画面会通过 NetBird 代理转发，再开启远程预览。"}), 400
+        try:
+            return jsonify(dict(hub.start_remote_preview(), ok=True))
+        except ValueError as exc:
+            return jsonify({"ok": False, "msg": str(exc)}), 400
+
+    @app.route("/api/remote-preview/stop", methods=["POST"])
+    @need_auth
+    def api_remote_preview_stop():
+        return jsonify(dict(hub.stop_remote_preview(), ok=True))
 
     @app.route("/api/mail/test", methods=["POST"])
     @need_auth

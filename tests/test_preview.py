@@ -111,6 +111,25 @@ class ClawBotPreviewTests(OfflineTestCase):
         self.assertNotIn(self.link, self.text())
         self.bot.send_video.assert_not_called()
 
+    def test_remote_reply_contains_https_link_and_external_network_instructions(self):
+        self.cfg.set("remote_preview", "enabled", True, save=False)
+        link = "https://fixture.example/preview#t=fixture-only-ticket"
+        self.hub.preview_link.return_value = link
+        self.request("预览1号")
+        self.hub.preview_link.assert_called_once_with("farm")
+        self.assertIn(link, self.text().splitlines())
+        self.assertIn("移动网络", self.text())
+        self.assertNotIn("须连接同一", self.text())
+        self.assertIn("10分钟", self.text())
+
+    def test_remote_failure_explains_recovery_without_returning_a_lan_link(self):
+        self.cfg.set("remote_preview", "enabled", True, save=False)
+        self.hub.preview_link.side_effect = ValueError("远程预览尚未就绪，请在电脑设置中点击启动")
+        self.request("预览1号")
+        self.assertIn("远程预览尚未就绪", self.text())
+        self.assertNotIn("http://", self.text())
+        self.bot.send_video.assert_not_called()
+
 
 class ClawBotTextReceiptTests(OfflineTestCase):
     """Exercise the real text sender without contacting WeChat."""

@@ -9,10 +9,15 @@ def main(group="all"):
         "api": ("tests.test_api",),
         "integrations": ("tests.test_integrations",),
         "events": ("tests.test_clawbot_events",),
-        "preview": ("tests.test_preview",),
+        "preview": ("tests.test_preview", "tests.test_remote_viewer",
+                    "tests.test_remote_preview", "tests.test_remote_integration"),
+        "remote": ("tests.test_remote_viewer", "tests.test_remote_preview",
+                   "tests.test_remote_integration", "tests.test_remote_bridge"),
         "lifecycle": ("tests.test_lifecycle",),
         "all": ("tests.test_media", "tests.test_api", "tests.test_integrations",
-                "tests.test_clawbot_events", "tests.test_preview", "tests.test_lifecycle"),
+                "tests.test_clawbot_events", "tests.test_preview", "tests.test_lifecycle",
+                "tests.test_remote_viewer", "tests.test_remote_preview", "tests.test_remote_integration",
+                "tests.test_remote_bridge"),
     }
     if group not in groups:
         raise SystemExit("Choose: all, media, api, integrations, events, preview, lifecycle")

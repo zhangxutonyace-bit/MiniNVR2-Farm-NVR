@@ -41,6 +41,7 @@ class Hub(object):
         # 微信 ClawBot（懒加载，没启用就不占资源）
         self.clawbot = None
         self.preview_service = None
+        self.remote_preview = None
         self._preview_lock = threading.RLock()
 
         self._start_threads()
@@ -62,6 +63,10 @@ class Hub(object):
         with self._preview_lock:
             if self._stop.is_set():
                 return
+            if self.remote_preview is not None and (
+                    not self.cfg.get("remote_preview", "enabled", default=False)
+                    or not self.cfg.get("clawbot", "enabled", default=False)):
+                self.remote_preview.stop()
             if self.preview_service is None and not self.cfg.get("preview", "enabled", default=False):
                 return
             try:
@@ -83,7 +88,10 @@ class Hub(object):
         with self._preview_lock:
             if self._stop.is_set():
                 raise ValueError("程序正在退出，无法开启预览。")
-            service = self.get_preview_service()
+            if self.cfg.get("remote_preview", "enabled", default=False):
+                service = self.get_remote_preview()
+            else:
+                service = self.get_preview_service()
             link = service.make_link(cid)
             if self._stop.is_set():
                 service.stop()
@@ -91,8 +99,46 @@ class Hub(object):
             return link
 
     def revoke_preview(self):
-        if self.preview_service is not None:
-            self.preview_service.revoke()
+        with self._preview_lock:
+            if self.preview_service is not None:
+                self.preview_service.revoke()
+            if self.remote_preview is not None:
+                self.remote_preview.revoke()
+
+    def get_remote_preview(self):
+        with self._preview_lock:
+            if self._stop.is_set():
+                raise ValueError("程序正在退出，无法开启远程预览。")
+            if self.remote_preview is None:
+                from .remote_preview import RemotePreviewController
+                self.remote_preview = RemotePreviewController(self.cfg, self.get, log=self.log)
+            return self.remote_preview
+
+    def remote_preview_status(self):
+        with self._preview_lock:
+            if self._stop.is_set():
+                return {"enabled": bool(self.cfg.get("remote_preview", "enabled", default=False)),
+                        "state": "stopped", "running": False, "installed": False,
+                        "url": "", "error": "程序正在退出。"}
+            status = self.get_remote_preview().status()
+            return dict(status, enabled=bool(self.cfg.get("remote_preview", "enabled", default=False)))
+
+    def start_remote_preview(self):
+        with self._preview_lock:
+            if not self.cfg.get("clawbot", "enabled", default=False):
+                raise ValueError("请先启用微信 ClawBot 并完成登录。")
+            service = self.get_remote_preview()
+            service.start()
+            if self._stop.is_set():
+                service.stop()
+                raise ValueError("程序正在退出，无法开启远程预览。")
+            return self.remote_preview_status()
+
+    def stop_remote_preview(self):
+        with self._preview_lock:
+            if self.remote_preview is not None:
+                self.remote_preview.stop()
+            return self.remote_preview_status()
 
     # ---------------- 微信 ClawBot ----------------
 
@@ -145,6 +191,8 @@ class Hub(object):
         # Share the lock with the whole link/sync operation: an in-flight
         # make_link() may start a listener, so shutdown must finish after it.
         with self._preview_lock:
+            if self.remote_preview is not None:
+                self.remote_preview.stop()
             if self.preview_service is not None:
                 self.preview_service.stop()
         self.stop_scan()
