@@ -17,13 +17,19 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
 NOTICE_NAME = re.compile(r"^(LICENSE|COPYING|NOTICE|AUTHORS)(?:[.\-_]|$)", re.I)
 PRIVATE_PATH = re.compile(r"(?:[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/]|/Users/|/home/)")
+STARTUP_CHECKS = ("http_startup", "port_conflict", "ffmpeg_preview", "web_quit", "lan_requires_token")
+EVENT_CHECKS = ("http_startup", "synthetic_loopback_delivery", "encrypted_event_integrity", "web_quit")
+PREVIEW_CHECKS = ("http_startup", "management_anonymous_protection", "synthetic_preview_command",
+                  "preview_assets", "camera_scoped_capability", "lan_live_jpeg",
+                  "missing_and_wrong_camera_denied", "preview_routes_isolated", "web_quit",
+                  "preview_listener_closed")
 
 
 def sha256(path: Path) -> str:
@@ -37,6 +43,84 @@ def sha256(path: Path) -> str:
 def write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def read_record(path: Path) -> dict:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Evidence must be an ordinary JSON file: " + path.name)
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate evidence field: " + key)
+            result[key] = value
+        return result
+
+    value = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_object)
+    if not isinstance(value, dict):
+        raise ValueError("Evidence must contain a JSON object: " + path.name)
+    return value
+
+
+def validate_build(record: dict, version: str, digest: str, size: int) -> None:
+    preview_release = tuple(map(int, version.split("."))) >= (2, 2, 3)
+    if record.get("version", None if preview_release else version) != version:
+        raise ValueError("Build evidence version does not match the release")
+    for hash_key, size_key in (("exe_sha256", "exe_bytes"), ("sha256", "bytes")):
+        if hash_key in record or size_key in record:
+            if record.get(hash_key) != digest or type(record.get(size_key)) is not int \
+                    or record[size_key] != size:
+                raise ValueError("Executable differs from the previously verified build")
+    required = ("exe_sha256", "exe_bytes") if preview_release else ("sha256", "bytes")
+    if not all(key in record for key in required):
+        raise ValueError("Build evidence is missing executable digest or size")
+    if preview_release and any(record.get(key) is not True for key in
+                               ("mobile_and_status_assets_match_source", "preview_module_included")):
+        raise ValueError("Build evidence does not verify the preview module and source assets")
+
+
+def validate_automatic(record: dict, version: str, checks: tuple[str, ...], label: str,
+                       expected_digest: str, expected_size: int) -> dict:
+    preview_release = tuple(map(int, version.split("."))) >= (2, 2, 3)
+    identity_fields = ("exe_sha256", "exe_bytes")
+    if preview_release or any(key in record for key in identity_fields):
+        if record.get("exe_sha256") != expected_digest or type(record.get("exe_bytes")) is not int \
+                or record["exe_bytes"] != expected_size:
+            raise ValueError("EXE " + label + " evidence does not match this executable digest and size")
+    if record.get("version") != version or any(record.get(key) != "PASS" for key in checks) \
+            or any(value != "PASS" for key, value in record.items()
+                   if key not in ("version", *identity_fields)):
+        raise ValueError("Missing matching successful EXE " + label + " evidence")
+    # Publish only the known checks, even if a future local report has more fields.
+    public = {"version": version, **{key: "PASS" for key in checks}}
+    if all(key in record for key in identity_fields):
+        public.update(exe_sha256=expected_digest, exe_bytes=expected_size)
+    return public
+
+
+def validate_phone(record: dict, version: str, digest: str) -> dict:
+    if record.get("version") != version or record.get("exe_sha256") != digest \
+            or record.get("phone_on_final_exe_verified") is not True:
+        raise ValueError("Missing user-confirmed phone preview evidence for this exact EXE")
+    verified_date = record.get("verified_date")
+    if not isinstance(verified_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", verified_date):
+        raise ValueError("Phone preview evidence requires an ISO verification date")
+    try:
+        date.fromisoformat(verified_date)
+    except ValueError as error:
+        raise ValueError("Phone preview evidence has an invalid verification date") from error
+    command = record.get("verified_command")
+    if not isinstance(command, str) or not re.fullmatch(r"预览(?:[1-9][0-9]*号)?", command):
+        raise ValueError("Phone preview evidence requires a supported numbered preview command")
+    return {"status": "PASS_USER_CONFIRMED", "verified_date": verified_date, "command": command,
+            "scope": "One user-confirmed phone on the same LAN; continuously updating preview from this release EXE"}
+
+
+def write_windows_guide(source: Path, target: Path) -> None:
+    guide = source.read_text(encoding="utf-8-sig")
+    # BOM and CRLF keep standalone Chinese guides readable in Notepad.
+    target.write_bytes(b"\xef\xbb\xbf" + guide.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
 
 
 def checked_copy(source: Path, target: Path) -> None:
@@ -157,11 +241,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="2.2.2")
     parser.add_argument("--output-dir", type=Path, default=REPO.parent / "deliverables")
+    parser.add_argument("--build-record", type=Path, default=REPO / "validation-local" / "build-artifact.json")
+    parser.add_argument("--startup-record", type=Path, default=REPO / "validation-local" / "startup-exe.json")
+    parser.add_argument("--event-record", type=Path,
+                        help="Defaults to validation-local/event-exe-vVERSION.json")
+    parser.add_argument("--preview-record", type=Path, help="Required for version 2.2.3 and later")
+    parser.add_argument("--phone-record", type=Path, help="User-confirmed preview receipt for the exact EXE")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", args.version):
         parser.error("version must have three numeric components")
     if sys.version_info[:3] != (3, 12, 10) or struct.calcsize("P") != 8:
         raise ValueError("Use the verified Python 3.12.10 x64 build environment")
+    preview_release = tuple(map(int, args.version.split("."))) >= (2, 2, 3)
+    if preview_release and (args.preview_record is None or args.phone_record is None):
+        raise ValueError("Preview releases require --preview-record and --phone-record")
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     stem = "MiniNVR2-v" + args.version + "-windows-x64"
@@ -169,26 +262,31 @@ def main() -> int:
     if not is_x64_pe(executable):
         raise ValueError("Existing executable is not a Windows x64 PE file")
     original_hash = sha256(executable)
-    build_record = json.loads((REPO / "validation-local" / "build-artifact.json").read_text(encoding="utf-8-sig"))
-    if original_hash != build_record["sha256"] or executable.stat().st_size != build_record["bytes"]:
-        raise ValueError("Executable differs from the previously verified build")
-    startup = json.loads((REPO / "validation-local" / "startup-exe.json").read_text(encoding="utf-8-sig"))
-    if startup.get("version") != args.version or any(value != "PASS" for key, value in startup.items() if key != "version"):
-        raise ValueError("Missing matching successful EXE startup evidence")
-    events = json.loads((REPO / "validation-local" / ("event-exe-v" + args.version + ".json")).read_text(encoding="utf-8-sig"))
-    event_checks = ("http_startup", "synthetic_loopback_delivery", "encrypted_event_integrity", "web_quit")
-    if events.get("version") != args.version or any(events.get(key) != "PASS" for key in event_checks):
-        raise ValueError("Missing matching successful EXE ClawBot event simulation evidence")
+    original_size = executable.stat().st_size
+    validate_build(read_record(args.build_record), args.version, original_hash, original_size)
+    startup = validate_automatic(read_record(args.startup_record), args.version, STARTUP_CHECKS, "startup",
+                                 original_hash, original_size)
+    event_path = args.event_record or REPO / "validation-local" / ("event-exe-v" + args.version + ".json")
+    events = validate_automatic(read_record(event_path), args.version, EVENT_CHECKS, "ClawBot event simulation",
+                                original_hash, original_size)
+    preview = {"status": "NOT_VERIFIED"}
+    if args.preview_record is not None:
+        preview = validate_automatic(read_record(args.preview_record), args.version, PREVIEW_CHECKS, "LAN preview",
+                                     original_hash, original_size)
+    phone_preview = {"status": "NOT_VERIFIED"}
+    if args.phone_record is not None:
+        phone_preview = validate_phone(read_record(args.phone_record), args.version, original_hash)
 
     staging = Path(tempfile.mkdtemp(prefix=stem + "-staging-", dir=output))
     root = staging / stem
     root.mkdir()
     checked_copy(executable, root / "MiniNVR2.exe")
     checked_copy(REPO / "docs" / "WINDOWS_DOWNLOAD.md", root / "先读我-使用说明.txt")
-    guide = (REPO / "docs" / "WECHAT_QUICK_START.txt").read_text(encoding="utf-8-sig")
-    # BOM and CRLF keep the standalone Chinese guide readable in Notepad.
-    (root / "微信ClawBot-操作步骤.txt").write_bytes(
-        b"\xef\xbb\xbf" + guide.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
+    write_windows_guide(REPO / "docs" / "WECHAT_QUICK_START.txt", root / "微信ClawBot-操作步骤.txt")
+    guides = ["先读我-使用说明.txt", "微信ClawBot-操作步骤.txt"]
+    if preview_release or args.preview_record is not None:
+        write_windows_guide(REPO / "docs" / "LAN_PREVIEW_QUICK_START.txt", root / "微信局域网预览-操作步骤.txt")
+        guides.append("微信局域网预览-操作步骤.txt")
     components = collect_notices(root, REPO / "validation-local" / "release-inputs")
     (root / "THIRD_PARTY_NOTICES" / "README.txt").write_text(
         "Third-party notices for MiniNVR2 " + args.version + " Windows x64\n\n"
@@ -203,7 +301,7 @@ def main() -> int:
         encoding="utf-8")
     live_delivery = {"status": "NOT_VERIFIED"}
     live_path = REPO / "validation-local" / "live-wechat-test.json"
-    if live_path.is_file():
+    if not preview_release and live_path.is_file():
         live = json.loads(live_path.read_text(encoding="utf-8-sig"))
         if live.get("tested_exe_sha256") == original_hash \
                 and live.get("phone_playback") == "PASS_USER_CONFIRMED":
@@ -220,8 +318,9 @@ def main() -> int:
         "python": {"version": ".".join(map(str, sys.version_info[:3])), "architecture": "x64"},
         "packager": {"name": "PyInstaller", "version": metadata.version("PyInstaller")},
         "runtime_components": components,
-        "user_guides": ["先读我-使用说明.txt", "微信ClawBot-操作步骤.txt"],
+        "user_guides": guides,
         "verification": {"existing_local_exe_startup": startup, "clawbot_event_simulation": events,
+                         "lan_preview_simulation": preview, "real_phone_lan_preview": phone_preview,
                          "real_wechat_event_delivery": live_delivery,
                          "other_windows_machines": "NOT_VERIFIED", "real_camera": "NOT_VERIFIED"},
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -253,8 +352,11 @@ def main() -> int:
         "exe_sha256": original_hash, "exe_bytes_unchanged": True,
         "zip_testzip": "PASS", "x64_pe": "PASS", "private_state_and_path_check": "PASS",
         "existing_exe_startup_evidence": "PASS", "existing_event_simulation_evidence": "PASS",
+        "existing_preview_simulation_evidence": "PASS" if args.preview_record is not None else "NOT_VERIFIED",
+        "real_phone_lan_preview": phone_preview,
         "new_feature_tests_run": False,
         "wechat_quick_start_included": (root / "微信ClawBot-操作步骤.txt").is_file(),
+        "lan_preview_quick_start_included": (root / "微信局域网预览-操作步骤.txt").is_file(),
         "third_party_sources_doc_included": (root / "THIRD_PARTY_SOURCES.md").is_file(),
         "ffmpeg_build_configuration_included": (root / "THIRD_PARTY_NOTICES" / "FFmpeg" / "BUILD_CONFIGURATION.txt").is_file(),
         "staging_directory": staging.name,

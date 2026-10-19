@@ -1,8 +1,8 @@
 # MiniNVR2 农场轻量录像机
 
-**[下载 Windows 64 位便携版](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v2.2.2/MiniNVR2-v2.2.2-windows-x64.zip)** · [查看 Release 与校验文件](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v2.2.2)
+**[下载 Windows 64 位便携版](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v2.2.3/MiniNVR2-v2.2.3-windows-x64.zip)** · [查看 Release 与校验文件](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v2.2.3)
 
-完整解压后双击 `MiniNVR2.exe` 即可运行，无需安装 Python。包内附有 `先读我-使用说明.txt` 和 `微信ClawBot-操作步骤.txt`，可直接打开查看。首次使用方法见 [Windows 下载与运行说明](docs/WINDOWS_DOWNLOAD.md)。
+完整解压后双击 `MiniNVR2.exe` 即可运行，无需安装 Python。包内附有 `先读我-使用说明.txt`、`微信ClawBot-操作步骤.txt` 和 `微信局域网预览-操作步骤.txt`，可直接打开查看。首次使用方法见 [Windows 下载与运行说明](docs/WINDOWS_DOWNLOAD.md)。
 
 下载后配置微信，请看下方的 [微信 ClawBot 操作步骤](#微信-clawbot-操作步骤)。
 
@@ -38,7 +38,7 @@ MiniNVR2 希望用更轻量的方式解决这些问题：**复用现有摄像头
 
 ![本机合成视频回放演示](docs/demo-playback.jpg)
 
-> 截图和演示素材均由本机生成，不是真实农场监控。当前源码为 2.2.3，公开下载包仍为 2.2.2；验证范围见 [验收记录](docs/VALIDATION.md)。
+> 截图和演示素材均由本机生成，不是真实农场监控。当前版本为 2.2.3；验证范围见 [验收记录](docs/VALIDATION.md)。
 
 ## 主要功能
 
@@ -132,6 +132,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 ### 微信打开当前画面（v2.2.3）
 
 手机和电脑连接同一 Wi-Fi，在设置中启用“微信局域网预览”并保存，然后向 ClawBot 单独发送 **预览1号** 或 **预览 摄像头名称**。点击返回链接即可查看该路画面；只有一路时可直接发送 **预览**。链接10分钟有效，不提供管理权限。详细设置和打不开时的处理见 [局域网预览操作步骤](docs/LAN_PREVIEW.md)。
+
+1. 在电脑“预览”页确认摄像头已有正常画面，在“设置 → 微信 ClawBot”启用微信并扫码登录。
+2. 勾选同一卡片中的“启用局域网预览”，IPv4先留空自动选择，端口保留 `8803`，点击“保存设置”。
+3. 手机连接同一Wi-Fi，向机器人单独发送 **预览1号**，点击返回链接查看画面。
+
+页面约每秒刷新一次，无声音；到期或程序重启后重新发送指令获取新链接。电脑需持续运行。多网卡导致地址选错时，可在设置中手填电脑的Wi-Fi IPv4；更多排查方法和包内同名TXT说明见上述操作步骤。
 
 2026-10-19 已在本机最终 Windows v2.2.3 程序完成真实微信测试：用户确认收到链接，手机点击后画面持续更新；此次未修改防火墙。其他设备及网络尚未分别验收。
 
