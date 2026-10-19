@@ -57,6 +57,9 @@ _DEFAULTS = {
 
     "server": {"host": "127.0.0.1", "port": 8800, "token": ""},
 
+    # Separate, read-only same-LAN preview; management remains on its own port.
+    "preview": {"enabled": False, "address": "", "port": 8803},
+
     "cameras": [],   # [{id,name,url,enabled,detect}]
 
     # 取流：只拉一条小流，一帧三用

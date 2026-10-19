@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>摄像头预览 · MiniNVR2</title>
+  <style>
+    :root {color-scheme: dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #111614; color: #edf4ef;}
+    * {box-sizing: border-box;}
+    body {margin: 0; min-height: 100vh; padding: max(24px, env(safe-area-inset-top)) 18px 28px;}
+    main {max-width: 820px; margin: auto;}
+    .brand {color: #a2b7a9; font-size: 13px; letter-spacing: .08em; margin: 0 0 12px;}
+    h1 {font-size: clamp(24px, 5vw, 34px); line-height: 1.35; overflow-wrap: anywhere; margin: 0 0 10px;}
+    .note, .foot {font-size: 14px; color: #a2b7a9; line-height: 1.7;}
+    .screen {border: 1px solid #33473a; border-radius: 16px; margin: 22px 0 16px; overflow: hidden; width: 100%; min-width: 0; min-height: 180px; background: #090e0b; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; aspect-ratio: 16/9;}
+    img {display: block; width: 100%; min-width: 0; max-width: 100%; height: 100%; object-fit: contain; grid-area: 1 / 1;}
+    [hidden] {display: none !important;}
+    .empty {padding: 26px; text-align: center; color: #a2b7a9; line-height: 1.7; grid-area: 1 / 1;}
+    .status {min-height: 3.1em; line-height: 1.6; margin: 0 0 14px; font-size: 16px;}
+    .status[data-kind="error"] {color: #ffcb9e;}
+    button {border: 0; background: #c7e8d0; color: #142b1b; font: inherit; font-weight: 600; border-radius: 10px; padding: 12px 24px; min-height: 46px; cursor: pointer;}
+    button:disabled {opacity: .5; cursor: default;}
+    button:focus-visible {outline: 3px solid #f8c982; outline-offset: 4px;}
+    .foot {border-top: 1px solid #29392f; padding-top: 18px; margin-top: 24px;}
+  </style>
+  <script src="/preview.js" defer></script>
+</head>
+<body>
+  <main>
+    <p class="brand">MiniNVR2 · 局域网预览</p>
+    <h1 id="camera">摄像头预览</h1>
+    <p class="note" id="expiry">请保持手机与电脑连接同一 Wi-Fi。</p>
+    <div class="screen">
+      <img id="picture" alt="所选摄像头的当前画面" hidden>
+      <div class="empty" id="empty">正在验证预览链接…</div>
+    </div>
+    <p class="status" id="status" role="status" aria-live="polite">正在连接电脑…</p>
+    <button type="button" id="retry" hidden>重新连接</button>
+    <p class="foot">链接仅允许查看这一台摄像头，10 分钟后失效，请勿转发。电脑需保持运行；手机切换到其他网络后将无法连接。返回微信重新发送“预览1号”可获取新链接。</p>
+  </main>
+</body>
+</html>

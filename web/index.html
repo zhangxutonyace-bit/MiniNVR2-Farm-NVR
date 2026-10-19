@@ -258,6 +258,14 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
         <div><button id="cbLogin">扫码登录</button></div>
         <div><button id="cbLogout" class="line">退出登录</button></div>
       </div>
+      <h4 style="margin:18px 0 8px">微信局域网预览（同一 Wi-Fi）</h4>
+      <div class="row">
+        <div><label class="switch"><input type="checkbox" id="pvEn"><span>启用局域网预览</span></label></div>
+        <div><label for="pvAddress">本机 Wi-Fi IPv4（留空自动）</label><input class="inp" id="pvAddress" placeholder="例如 192.168.1.20" style="width:200px"></div>
+        <div><label for="pvPort">预览端口</label><input class="inp" id="pvPort" type="number" min="1024" max="65535" value="8803" style="width:100px"></div>
+      </div>
+      <div class="hint">保存后，在微信单独发送“预览1号”或“预览 摄像头名称”，点击回复的链接查看该路画面。手机须与电脑连接同一 Wi-Fi；链接10分钟有效，只允许查看所选摄像头。预览约每秒刷新一帧。</div>
+      <div class="hint" id="pvState">局域网预览未开启。</div>
       <div id="cbBox" style="display:none;margin-top:10px">
         <div style="display:flex;gap:14px;align-items:center">
           <img id="cbQr" alt="微信登录二维码"

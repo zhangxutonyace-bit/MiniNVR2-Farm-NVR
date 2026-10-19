@@ -214,6 +214,8 @@ class ClawBot(threading.Thread):
             self.state = "error"
             self.error = "登录确认了但没拿到 token"
             return
+        if self.hub is not None and hasattr(self.hub, "revoke_preview"):
+            self.hub.revoke_preview()
         self.cfg.set("clawbot", "token", tok)
         self.cfg.set("clawbot", "bot_id", r.get("ilink_bot_id") or "")
         self.cfg.set("clawbot", "user_id", r.get("ilink_user_id") or "")
@@ -228,6 +230,8 @@ class ClawBot(threading.Thread):
 
     def logout(self):
         self.stop()
+        if self.hub is not None and hasattr(self.hub, "revoke_preview"):
+            self.hub.revoke_preview()
         self.cfg.set("clawbot", "token", "")
         self.cfg.set("clawbot", "login_at", 0)
         self.state = "idle"
@@ -476,6 +480,8 @@ class ClawBot(threading.Thread):
 
     HELP = (
         "可以直接这样说：\n"
+        "· 预览1号 / 预览 农场 —— 同一Wi-Fi打开该路实时画面\n"
+        "· 预览 —— 一路时直接发链接，多路时显示可选项\n"
         "· 今天事件 / 昨天事件 农场 —— 列出已完成事件录像\n"
         "· 事件 2026-10-18 1号 —— 指定日期和摄像头\n"
         "· 最新事件 [日期/摄像头] —— 发最新一段（默认今天）\n"
@@ -702,6 +708,8 @@ class ClawBot(threading.Thread):
         if any(k in text for k in ("帮助", "help", "?", "？", "菜单", "怎么用")):
             self.send_text(to, ctx, self.HELP)
             return
+        if self._answer_preview(to, ctx, text):
+            return
         if self._answer_events(to, ctx, text):
             return
         if text in ("列表", "摄像头", "摄像头列表", "有哪些", "有哪些摄像头", "清单"):
@@ -740,3 +748,50 @@ class ClawBot(threading.Thread):
                 sent += 1
         if sent == 0 and len(targets) > 1:
             self.send_text(to, ctx, "%s 这天没有任何一路的抽帧录像。" % day)
+
+    def _answer_preview(self, to, ctx, text):
+        match = re.match(r"^(?:查看实时预览|实时预览|查看预览|预览)(.*)$", text)
+        if not match:
+            return False
+        selector = match.group(1).strip(" \t\r\n，,。:：")
+        cameras = self._cameras()
+        if not cameras:
+            self.send_text(to, ctx, "还没有启用的摄像头，请先添加摄像头。")
+            return True
+        camera = None
+        if not selector:
+            if len(cameras) == 1:
+                camera = cameras[0]
+            else:
+                lines = ["请选择要预览的摄像头："]
+                lines.extend("%d. %s" % (i, c.get("name") or c.get("id"))
+                             for i, c in enumerate(cameras, 1))
+                lines.append("请单独发送“预览1号”或“预览 摄像头名称”。手机须与电脑连接同一Wi-Fi。")
+                self.send_text(to, ctx, "\n".join(lines))
+                return True
+        else:
+            for candidate in cameras:
+                name = str(candidate.get("name") or "").strip()
+                if name and selector == name:
+                    camera = candidate
+                    break
+            if camera is None:
+                ordinal = re.fullmatch(r"(?:第\s*)?([0-9]+)\s*(?:号|路|个)?(?:摄像头)?|摄像头\s*([0-9]+)", selector)
+                if ordinal:
+                    index = int(ordinal.group(1) or ordinal.group(2)) - 1
+                    if 0 <= index < len(cameras):
+                        camera = cameras[index]
+        if camera is None:
+            self.send_text(to, ctx, "未找到指定摄像头或预览命令有误。请发送“列表”，再单独发送“预览1号”或“预览 摄像头名称”。")
+            return True
+        if self.hub is None or not hasattr(self.hub, "preview_link"):
+            self.send_text(to, ctx, "局域网预览未就绪，请先在电脑设置中启用“微信局域网预览”。")
+            return True
+        try:
+            link = self.hub.preview_link(camera["id"])
+        except ValueError as exc:
+            self.send_text(to, ctx, "暂时不能生成预览链接：%s" % exc)
+            return True
+        self.send_text(to, ctx, "%s 实时预览\n手机和电脑须连接同一Wi-Fi，链接10分钟有效，请勿转发。\n%s"
+                       % (camera.get("name") or camera["id"], link))
+        return True

@@ -90,3 +90,90 @@ class LifecycleTests(OfflineTestCase):
         finally:
             release.set()
             hub.stop_all()
+
+    def test_preview_cannot_restart_while_shutdown_waits_for_camera(self):
+        hub = self.new_idle_hub()
+        entered = threading.Event()
+        release = threading.Event()
+        service = mock.Mock()
+        service.running = True
+        service.stop.side_effect = lambda: setattr(service, "running", False)
+        service.make_link.side_effect = lambda cid: setattr(service, "running", True)
+        service.sync.side_effect = lambda: setattr(service, "running", True)
+        hub.preview_service = service
+
+        def stop_camera():
+            entered.set()
+            release.wait(3)
+
+        hub.cams["sample"] = SimpleNamespace(stop=stop_camera)
+        shutdown = threading.Thread(target=hub.stop_all)
+        shutdown.start()
+        try:
+            self.assertTrue(entered.wait(2), "shutdown did not reach the camera barrier")
+            self.assertTrue(hub._stop.is_set())
+            with self.assertRaises(ValueError):
+                hub.preview_link("sample")
+            hub.sync_preview()
+            service.make_link.assert_not_called()
+            service.sync.assert_not_called()
+        finally:
+            release.set()
+            shutdown.join(3)
+        self.assertFalse(shutdown.is_alive())
+        self.assertFalse(service.running)
+
+    def test_shutdown_serializes_inflight_preview_start_and_clears_listener(self):
+        for operation in ("make_link", "sync"):
+            with self.subTest(operation=operation):
+                hub = self.new_idle_hub()
+                entered = threading.Event()
+                release = threading.Event()
+                service = mock.Mock()
+                service.running = False
+                service.stop.side_effect = lambda: setattr(service, "running", False)
+                hub.preview_service = service
+                failures = []
+
+                def start_listener(*args):
+                    entered.set()
+                    release.wait(3)
+                    service.running = True
+                    return "fixture-preview-link"
+
+                getattr(service, operation).side_effect = start_listener
+
+                def request_preview():
+                    try:
+                        if operation == "make_link":
+                            hub.preview_link("sample")
+                        else:
+                            hub.sync_preview()
+                    except Exception as exc:
+                        failures.append(exc)
+
+                request = threading.Thread(target=request_preview)
+                shutdown = threading.Thread(target=hub.stop_all)
+                request.start()
+                try:
+                    self.assertTrue(entered.wait(2), "preview did not reach the start barrier")
+                    shutdown.start()
+                    self.assertTrue(hub._stop.wait(2), "shutdown did not publish its stop state")
+                finally:
+                    release.set()
+                    request.join(3)
+                    if shutdown.ident is not None:
+                        shutdown.join(3)
+                self.assertFalse(request.is_alive())
+                self.assertFalse(shutdown.is_alive())
+                self.assertFalse(service.running)
+                if operation == "make_link":
+                    self.assertEqual(len(failures), 1)
+                    self.assertIsInstance(failures[0], ValueError)
+                else:
+                    self.assertEqual(failures, [])
+                calls = getattr(service, operation).call_count
+                with self.assertRaises(ValueError):
+                    hub.preview_link("sample")
+                hub.sync_preview()
+                self.assertEqual(getattr(service, operation).call_count, calls)

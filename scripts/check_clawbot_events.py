@@ -26,7 +26,8 @@ import urllib.request
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "2.2.2"
+sys.path.insert(0, str(ROOT))
+from nvr import __version__ as EXPECTED_VERSION
 OWNER = "synthetic-owner-no-real-account"
 TOKEN = "synthetic-token-no-real-account"
 CONTEXT = "synthetic-context-no-real-conversation"

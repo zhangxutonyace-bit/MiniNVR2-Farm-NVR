@@ -304,7 +304,12 @@ function fillSettings(s) {
   $('#cbEn').checked = cb.enabled !== false;
   $('#cbAuto').checked = cb.auto_start !== false;
   $('#cbMaxMb').value = cb.max_video_mb || 50;
+  var preview = s.preview || {};
+  $('#pvEn').checked = preview.enabled === true;
+  $('#pvAddress').value = preview.address || '';
+  $('#pvPort').value = preview.port || 8803;
   refreshClawbot();
+  refreshPreview();
 }
 
 $('#btnSave').onclick = function () {
@@ -323,7 +328,9 @@ $('#btnSave').onclick = function () {
             to: $('#mlTo').value.trim() },
     scan: { range: $('#scRange').value.trim(), pwds: $('#scPwds').value },
     clawbot: { enabled: $('#cbEn').checked, auto_start: $('#cbAuto').checked,
-               max_video_mb: +$('#cbMaxMb').value || 50 }
+               max_video_mb: +$('#cbMaxMb').value || 50 },
+    preview: { enabled: $('#pvEn').checked, address: $('#pvAddress').value.trim(),
+               port: +$('#pvPort').value || 8803 }
   } }).then(function (r) {
     toast(r.ok ? '已保存并生效' : (r.msg || '失败'), !r.ok);
     if (r.ok) {
@@ -335,6 +342,18 @@ $('#btnSave').onclick = function () {
 
 /* ---------------- 微信 ClawBot ---------------- */
 var cbTimer = null;
+
+function refreshPreview() {
+  api('/api/preview').then(function (p) {
+    if (!p.enabled) { $('#pvState').textContent = '局域网预览未开启。'; return; }
+    if (p.error) { $('#pvState').textContent = '预览未就绪：' + p.error; return; }
+    if (p.running) {
+      $('#pvState').textContent = '已开启：' + p.address + ':' + p.port + '。请在微信发送“预览1号”；若手机打不开，请确认同一 Wi-Fi，并检查专用网络的防火墙许可。';
+    } else {
+      $('#pvState').textContent = '预览服务尚未就绪，请检查本机 Wi-Fi 地址和端口后重新保存。';
+    }
+  }).catch(function () { $('#pvState').textContent = '暂时无法读取局域网预览状态。'; });
+}
 
 function refreshClawbot() {
   api('/api/clawbot').then(function (d) {

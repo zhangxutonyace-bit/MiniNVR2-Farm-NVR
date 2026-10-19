@@ -1,4 +1,6 @@
+import copy
 import datetime
+import json
 from types import SimpleNamespace
 
 from nvr.server import create_app
@@ -10,6 +12,8 @@ class FakeHub:
         self.scan_state = {"running": False, "results": []}
         self.active_paths = set()
         self.sync_requests = 0
+        self.preview_sync_requests = 0
+        self.preview_status_requests = 0
         self.log = lambda *args: None
         self.bot = SimpleNamespace(state="idle", qr_url="", error="", _running=False,
                                    HELP="Offline fixture", logged_in=lambda: False,
@@ -29,6 +33,14 @@ class FakeHub:
 
     def get_clawbot(self, restart=False):
         return self.bot
+
+    def sync_preview(self):
+        self.preview_sync_requests += 1
+
+    def preview_status(self):
+        self.preview_status_requests += 1
+        return {"enabled": False, "running": False, "address": "",
+                "port": 8803, "error": ""}
 
 
 class ApiTests(OfflineTestCase):
@@ -181,3 +193,65 @@ class ApiTests(OfflineTestCase):
         self.assertEqual(response.status_code, 403)
         response = self.client.post("/api/settings", data="{}", content_type="text/plain")
         self.assertIn(response.status_code, (400, 415))
+
+    def test_preview_status_keeps_management_token_and_cookie_authentication(self):
+        self.cfg.set("server", "token", "management-only-token")
+        for path, headers in (("/api/preview", {}),
+                              ("/api/preview?token=management-only-token", {}),
+                              ("/api/preview", {"X-Token": "wrong-token"}),
+                              ("/api/preview", {"Authorization": "Bearer fixture-preview-ticket"})):
+            with self.subTest(path=path, headers=headers):
+                response = self.client.get(path, headers=headers)
+                self.assertEqual(response.status_code, 401)
+                self.assertTrue(response.get_json()["auth_required"])
+        self.assertEqual(self.hub.preview_status_requests, 0)
+        response = self.client.get("/api/preview", headers={"X-Token": "management-only-token"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["ok"])
+        self.assertFalse(response.get_json()["running"])
+        self.assertEqual(self.hub.preview_status_requests, 1)
+        self.assertEqual(self.client.post("/api/auth", json={"token": "management-only-token"}).status_code, 200)
+        self.assertEqual(self.client.get("/api/preview").status_code, 200)
+        self.assertEqual(self.hub.preview_status_requests, 2)
+
+    def test_invalid_preview_settings_reject_entire_save_without_partial_mutation(self):
+        original = copy.deepcopy(self.cfg.data)
+        stored = (self.root / "config.json").read_bytes()
+        invalid = ({"enabled": "true"}, {"enabled": 1},
+                   {"address": "8.8.8.8"}, {"address": "127.0.0.1"},
+                   {"address": "169.254.1.2"}, {"address": "example.invalid"},
+                   {"address": 123}, {"port": True}, {"port": 8803.5},
+                   {"port": 1023}, {"port": 65536}, {"port": "8803"},
+                   [], "invalid", None)
+        for preview in invalid:
+            with self.subTest(preview=preview):
+                # Place unrelated updates first, so validation must precede all writes.
+                response = self.client.post("/api/settings", json={
+                    "site": {"name": "Must not be saved"},
+                    "server": {"token": "must-not-be-installed"},
+                    "preview": preview})
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.get_json()["ok"])
+                self.assertEqual(self.cfg.data, original)
+                self.assertEqual((self.root / "config.json").read_bytes(), stored)
+                self.assertEqual(self.hub.sync_requests, 0)
+                self.assertEqual(self.hub.preview_sync_requests, 0)
+
+    def test_valid_preview_settings_persist_and_synchronize_listener(self):
+        response = self.client.post("/api/settings", json={
+            "site": {"name": "Preview fixture"},
+            "preview": {"enabled": True, "address": " 192.168.1.10 ", "port": 8810}})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["ok"])
+        expected = {"enabled": True, "address": "192.168.1.10", "port": 8810}
+        self.assertEqual(self.cfg.get("preview"), expected)
+        self.assertEqual(self.cfg.get("site", "name"), "Preview fixture")
+        stored = json.loads((self.root / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["preview"], expected)
+        self.assertEqual(self.hub.sync_requests, 1)
+        self.assertEqual(self.hub.preview_sync_requests, 1)
+        # A partial change retains the configured address and port and applies disabling.
+        response = self.client.post("/api/settings", json={"preview": {"enabled": False}})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.cfg.get("preview"), dict(expected, enabled=False))
+        self.assertEqual(self.hub.preview_sync_requests, 2)

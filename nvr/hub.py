@@ -40,9 +40,59 @@ class Hub(object):
 
         # 微信 ClawBot（懒加载，没启用就不占资源）
         self.clawbot = None
+        self.preview_service = None
+        self._preview_lock = threading.RLock()
 
         self._start_threads()
         self._boot_clawbot()
+        self.sync_preview()
+
+    # ---------------- 单摄像头局域网预览 ----------------
+
+    def get_preview_service(self):
+        with self._preview_lock:
+            if self._stop.is_set():
+                raise ValueError("程序正在退出，无法开启预览。")
+            if self.preview_service is None:
+                from .preview import PreviewService
+                self.preview_service = PreviewService(self.cfg, self.get, log=self.log)
+            return self.preview_service
+
+    def sync_preview(self):
+        with self._preview_lock:
+            if self._stop.is_set():
+                return
+            if self.preview_service is None and not self.cfg.get("preview", "enabled", default=False):
+                return
+            try:
+                service = self.get_preview_service()
+                service.sync()
+                if self._stop.is_set():
+                    service.stop()
+            except Exception as exc:
+                self.log("[预览] 局域网服务未就绪（%s），请检查预览设置。" % type(exc).__name__)
+
+    def preview_status(self):
+        if self.preview_service is not None:
+            return self.preview_service.status()
+        return {"enabled": bool(self.cfg.get("preview", "enabled", default=False)),
+                "running": False, "address": self.cfg.get("preview", "address", default=""),
+                "port": self.cfg.get("preview", "port", default=8803), "error": ""}
+
+    def preview_link(self, cid):
+        with self._preview_lock:
+            if self._stop.is_set():
+                raise ValueError("程序正在退出，无法开启预览。")
+            service = self.get_preview_service()
+            link = service.make_link(cid)
+            if self._stop.is_set():
+                service.stop()
+                raise ValueError("程序正在退出，无法开启预览。")
+            return link
+
+    def revoke_preview(self):
+        if self.preview_service is not None:
+            self.preview_service.revoke()
 
     # ---------------- 微信 ClawBot ----------------
 
@@ -92,6 +142,11 @@ class Hub(object):
 
     def stop_all(self):
         self._stop.set()
+        # Share the lock with the whole link/sync operation: an in-flight
+        # make_link() may start a listener, so shutdown must finish after it.
+        with self._preview_lock:
+            if self.preview_service is not None:
+                self.preview_service.stop()
         self.stop_scan()
         with self._sync_cv:
             self._sync_cv.notify_all()

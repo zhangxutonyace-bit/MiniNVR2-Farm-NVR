@@ -381,7 +381,7 @@ def create_app(cfg, hub, on_quit=None):
 
     # ---------------- 设置 ----------------
     _SEC = ("site", "server", "stream", "detect", "record", "mail", "scan",
-            "clawbot", "system")
+            "clawbot", "preview", "system")
     _SECRETS = {"server": ("token",), "mail": ("pass",), "scan": ("pwds",),
                 "clawbot": ("token",)}
 
@@ -399,6 +399,16 @@ def create_app(cfg, hub, on_quit=None):
     @need_auth
     def api_settings_save():
         d = request.get_json(silent=True) or {}
+        if "preview" in d:
+            from .preview import validate_options
+            try:
+                if not isinstance(d["preview"], dict):
+                    raise ValueError("局域网预览设置必须为对象")
+                proposed = dict(cfg.get("preview"))
+                proposed.update(d["preview"])
+                d["preview"] = validate_options(proposed)
+            except ValueError as exc:
+                return jsonify({"ok": False, "msg": str(exc)}), 400
         new_token = (d.get("server") or {}).get("token") if isinstance(d.get("server"), dict) else None
         if new_token is not None and not isinstance(new_token, str):
             return jsonify({"ok": False, "msg": "访问口令必须为文字"}), 400
@@ -417,7 +427,16 @@ def create_app(cfg, hub, on_quit=None):
         if not cfg.get("clawbot", "enabled", default=False) and getattr(hub, "clawbot", None) is not None:
             hub.clawbot.stop()
         hub.request_sync()
+        if hasattr(hub, "sync_preview"):
+            hub.sync_preview()
         return jsonify({"ok": True})
+
+    @app.route("/api/preview")
+    def api_preview_status():
+        if hasattr(hub, "preview_status"):
+            return jsonify(dict(hub.preview_status(), ok=True))
+        return jsonify({"ok": True, "enabled": False, "running": False,
+                        "address": "", "port": 8803, "error": ""})
 
     @app.route("/api/mail/test", methods=["POST"])
     @need_auth
