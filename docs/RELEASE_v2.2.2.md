@@ -4,6 +4,8 @@
 
 下载 [MiniNVR2-v2.2.2-windows-x64.zip](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v2.2.2/MiniNVR2-v2.2.2-windows-x64.zip)，无需安装 Python 或 FFmpeg。
 
+**2026-10-19 下载包已更新：** 解压后，程序同目录新增 `微信ClawBot-操作步骤.txt`，可直接用记事本查看完整六步说明；`先读我-使用说明.txt` 也已同步更新。下载包和包内文件的校验值同步更新，已安装用户可重新下载获取说明。
+
 更新前正常退出并备份原来的 `data` 数据目录。微信功能默认关闭，需要本人启用、扫码接入。
 
 本版附第三方组件许可、来源资料和 `SHA256SUMS.txt`；使用的依赖版本与 v2.2.1 相同。

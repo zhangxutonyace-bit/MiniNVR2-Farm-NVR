@@ -4,6 +4,8 @@
 
 这是已经打包的桌面程序，包含 Python 运行环境、网页资源、OpenCV 检测模型和 FFmpeg，无需另外安装 Python。
 
+解压后，同目录附有 `微信ClawBot-操作步骤.txt`，用记事本打开即可查看完整六步配置、扫码登录和事件录像查询方法。
+
 ## 第一次使用
 
 1. 从本项目 GitHub Release 下载 `MiniNVR2-v2.2.2-windows-x64.zip`。

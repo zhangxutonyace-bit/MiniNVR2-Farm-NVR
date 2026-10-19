@@ -185,6 +185,10 @@ def main() -> int:
     root.mkdir()
     checked_copy(executable, root / "MiniNVR2.exe")
     checked_copy(REPO / "docs" / "WINDOWS_DOWNLOAD.md", root / "先读我-使用说明.txt")
+    guide = (REPO / "docs" / "WECHAT_QUICK_START.txt").read_text(encoding="utf-8-sig")
+    # BOM and CRLF keep the standalone Chinese guide readable in Notepad.
+    (root / "微信ClawBot-操作步骤.txt").write_bytes(
+        b"\xef\xbb\xbf" + guide.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
     components = collect_notices(root, REPO / "validation-local" / "release-inputs")
     (root / "THIRD_PARTY_NOTICES" / "README.txt").write_text(
         "Third-party notices for MiniNVR2 " + args.version + " Windows x64\n\n"
@@ -197,6 +201,18 @@ def main() -> int:
         "See THIRD_PARTY_SOURCES.md and the separate third-party source release asset.\n"
         "MiniNVR2 source is available in the GitHub repository; no new project license is granted here.\n",
         encoding="utf-8")
+    live_delivery = {"status": "NOT_VERIFIED"}
+    live_path = REPO / "validation-local" / "live-wechat-test.json"
+    if live_path.is_file():
+        live = json.loads(live_path.read_text(encoding="utf-8-sig"))
+        if live.get("tested_exe_sha256") == original_hash \
+                and live.get("phone_playback") == "PASS_USER_CONFIRMED":
+            # Whitelist public evidence; never copy account/configuration data.
+            live_delivery = {"status": "PASS_USER_CONFIRMED",
+                             "verified_at": live["verified_at"],
+                             "command": live["verified_command"],
+                             "synthetic_video_seconds": live["event"]["seconds"],
+                             "scope": "One scanned account and handset; synthetic event video"}
     manifest = {
         "application": "MiniNVR2", "version": args.version, "target": "Windows 10/11 x64",
         "source_commit": commit_id(),
@@ -204,8 +220,10 @@ def main() -> int:
         "python": {"version": ".".join(map(str, sys.version_info[:3])), "architecture": "x64"},
         "packager": {"name": "PyInstaller", "version": metadata.version("PyInstaller")},
         "runtime_components": components,
+        "user_guides": ["先读我-使用说明.txt", "微信ClawBot-操作步骤.txt"],
         "verification": {"existing_local_exe_startup": startup, "clawbot_event_simulation": events,
-                         "other_windows_machines": "NOT_VERIFIED", "real_camera_and_message_delivery": "NOT_VERIFIED"},
+                         "real_wechat_event_delivery": live_delivery,
+                         "other_windows_machines": "NOT_VERIFIED", "real_camera": "NOT_VERIFIED"},
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     write_json(root / "RELEASE_MANIFEST.json", manifest)
@@ -234,7 +252,9 @@ def main() -> int:
         "archive_sha256": zip_hash, "checksum_file": checksum.name, "members": member_count,
         "exe_sha256": original_hash, "exe_bytes_unchanged": True,
         "zip_testzip": "PASS", "x64_pe": "PASS", "private_state_and_path_check": "PASS",
-        "existing_exe_startup_evidence": "PASS", "new_feature_tests_run": True,
+        "existing_exe_startup_evidence": "PASS", "existing_event_simulation_evidence": "PASS",
+        "new_feature_tests_run": False,
+        "wechat_quick_start_included": (root / "微信ClawBot-操作步骤.txt").is_file(),
         "third_party_sources_doc_included": (root / "THIRD_PARTY_SOURCES.md").is_file(),
         "ffmpeg_build_configuration_included": (root / "THIRD_PARTY_NOTICES" / "FFmpeg" / "BUILD_CONFIGURATION.txt").is_file(),
         "staging_directory": staging.name,

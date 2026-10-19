@@ -2,7 +2,7 @@
 
 **[下载 Windows 64 位便携版](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v2.2.2/MiniNVR2-v2.2.2-windows-x64.zip)** · [查看 Release 与校验文件](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v2.2.2)
 
-完整解压后双击 `MiniNVR2.exe` 即可运行，无需安装 Python。首次使用方法见 [Windows 下载与运行说明](docs/WINDOWS_DOWNLOAD.md)。
+完整解压后双击 `MiniNVR2.exe` 即可运行，无需安装 Python。包内附有 `先读我-使用说明.txt` 和 `微信ClawBot-操作步骤.txt`，可直接打开查看。首次使用方法见 [Windows 下载与运行说明](docs/WINDOWS_DOWNLOAD.md)。
 
 下载后配置微信，请看下方的 [微信 ClawBot 操作步骤](#微信-clawbot-操作步骤)。
 

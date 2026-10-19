@@ -70,3 +70,5 @@ SHA-256：`D2CE9323892093C16172B30E0203746B7681B4C639C0D109783B81AFE12B265A`。
 ## Windows Release 分发
 
 Windows v2.2.2 便携包采用本轮重新构建并验收的 EXE。下载包额外包含中文运行说明、第三方许可、来源资料和含本机模拟事件验收结果的发布清单；打包器要求 EXE 摘要、启动证据和事件模拟证据均匹配版本。GitHub 下载资产及完整包校验值以 [v2.2.2 Release](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v2.2.2) 的 `SHA256SUMS.txt` 为准，v2.2.1 保留。
+
+2026-10-19 补充操作说明后重新封装 v2.2.2 Windows ZIP：新增与程序同目录的 `微信ClawBot-操作步骤.txt`，采用 UTF-8 BOM 与 Windows 换行；更新通用使用说明和包内校验清单。EXE 的字节及上述 SHA-256 保持一致，沿用已完成的启动、模拟微信与真实手机收件证据；本次对 ZIP 完整性、说明内容、文件级校验和个人数据排除重新检查。
