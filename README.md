@@ -1,14 +1,31 @@
 # MiniNVR2 农场轻量录像机
 
-**V3.0 新增算法商城。** 内置 NanoDet 多目标检测，可按需下载 YOLOX Nano / YOLOX-S，选择一个模型并勾选人形、汽车、座椅、餐桌、猫狗、手机等目标，自动生成事件录像，继续使用原回放、下载与微信查询。下载不会自动启用，旧配置保持原检测模式；需点击“应用模型和选中目标”才切换。[算法商城操作步骤与识别边界](docs/ALGORITHM_STORE_QUICK_START.md) · [v3.0.0 更新说明](docs/RELEASE_v3.0.0.md)。
+MiniNVR2 V3.0 上线了！复用旧网络摄像头、电脑内置或 USB 摄像头，加上一台闲置电脑，就能搭建一套小型智能录像平台。
+
+本版新增「算法商城」：内置 NanoDet，还可按需下载 YOLOX Nano、YOLOX-S。通过勾选，选择识别人形、汽车、座椅、猫、狗、手机、杯子等多种目标。检测到选中目标后自动录像，新事件视频会显示不同颜色的识别框和中文标签，直观看清“识别到了什么”；录像还可通过网页回放和微信 ClawBot 查询。
+
+📥 [Windows V3.0.0 直接下载](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v3.0.0/MiniNVR2-v3.0.0-windows-x64.zip)
+
+简单上手：
+
+1. 完整解压，双击 `MiniNVR2.exe`，无需另装 Python 或 FFmpeg。
+2. 在「摄像头」添加并启用设备，到「预览」确认画面正常。
+3. 打开「算法商城」，选择内置模型，或下载 YOLOX 模型；勾选需要识别的目标，点击「应用模型和选中目标」。下载、勾选后还需点击应用才会生效。
+4. 确认「启用检测」和摄像头「参与检测」已打开。目标框默认开启，事件结束后到「回放 → 事件录像」查看彩框和标签。
+
+杯子识别可先尝试本次实测通过的 **YOLOX-S，置信度 0.35**；不同场景效果需现场验证。
+
+📖 [算法商城完整操作说明](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/blob/v3.0.0/docs/ALGORITHM_STORE_QUICK_START.md)
+
+下载包内也附有中文操作说明，解压后即可查看。
+
+## 识别说明与本次实测
+
+[v3.0.0 更新说明与校验文件](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v3.0.0)。
 
 商城模式的新事件录像按类别固定使用红、橙、深蓝、黄绿描边，附中文类别标签，勾选项前显示对应色样。颜色稳定复用，仅区分类别；宠物只标注实际猫/狗，不代表危险等级、身份或跟踪编号。中文字体离线随包附带；原始预览、抽帧和旧录像不改变，旧模式保留全局三色设置。
 
-**[下载 Windows 64 位便携版 v3.0.0](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v3.0.0/MiniNVR2-v3.0.0-windows-x64.zip)** · [查看 Release 与校验文件](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v3.0.0)
-
 完整解压后双击 `MiniNVR2.exe` 即可运行，无需安装 Python。包内附有六份说明：`先读我-使用说明.txt`、`算法商城-操作步骤.txt`、`电脑内置USB摄像头-操作步骤.txt`、`微信ClawBot-操作步骤.txt`、`微信局域网预览-操作步骤.txt`、`微信远程预览-操作步骤.txt`。首次使用方法见 [Windows 下载与运行说明](docs/WINDOWS_DOWNLOAD.md)。
-
-**算法商城六步上手：** 确认摄像头预览在线 → 选择模型（YOLOX 先下载）→ 勾选目标 → 保持置信度 `0.35` 起步 → 点击“应用模型和选中目标”→ 确认“启用检测”和该路“参与检测”打开。选中目标离开并结束录像后，到“回放”查看；微信单独发送 **今日事件** 或 **今天事件**，收到列表后再单独发送 **播放第一条**。
 
 2026-10-19，用户在本机电脑摄像头、**YOLOX-S / 0.35** 下确认“杯子有橙框和标签，移动时能跟随”，并确认微信“今日事件 → 播放第一条”返回列表和可播放视频。此次 NanoDet 对杯子发生漏检；杯子场景可先试 YOLOX-S，但其 CPU 开销更高。这不是其他物品、设备或场景的准确率承诺，也未单独确认本次杯子标签在手机上的可读性。[完整验证范围](docs/VALIDATION.md)。
 
