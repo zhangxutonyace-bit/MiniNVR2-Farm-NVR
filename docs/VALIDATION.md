@@ -16,7 +16,7 @@
 
 最终Windows候选大小139,093,328字节，SHA-256 `f2048518ef81595bad6eaac61884ded4fe1eda9ad6a5d241fd65abf09dfd7090`。同一EXE的模型/许可/模块/网页资源、6项启动及10项微信预览模拟检查通过。运动模式合成MP4为42帧、5.625秒，42帧有新增红框；auto人物标注使用用户提供的已含旧框素材，输出82帧、10.625秒，其中57帧有新增蓝框，无标注警告。两条链路的已完成MP4与本机模拟CDN加密上传/解密返回逐字节相同；没有真实新摄像头或真实微信发片参与本轮自动测试。证据：`tracking-build-record.json`、`tracking-exe-assets.json`、`tracking-exe-startup.json`、`tracking-exe-preview.json`、`tracking-motion-exe-report.json`、`tracking-person-exe-report.json`。
 
-最终源码、嵌入模块、全部收据与模型摘要通过独立验收审查；复审发现的三项边界均已关闭。已将上述同一EXE切换到本机8810并启动，保留微信登录/接收状态、原摄像头和录像目录，画框开启且红色，未开启外网中继，未替换正式AppData安装。界面实查开关已勾选，证据：`validation-local/tracking-activation.json`、`tracking-settings.jpg`。已请用户录制新的走动、停顿、转身远离事件，并经回放和真实微信检查；本次真人跟随/手机播放尚待用户反馈，旧版“有框能播放”不能替代本次跟随验收。本轮未发布GitHub。
+最终源码、嵌入模块、全部收据与模型摘要通过独立验收审查；复审发现的三项边界均已关闭。已将上述同一EXE切换到本机8810并启动，保留微信登录/接收状态、原摄像头和录像目录，画框开启且红色，未开启外网中继，未替换正式AppData安装。界面实查开关已勾选，证据：`validation-local/tracking-activation.json`、`tracking-settings.jpg`。2026-10-19，用户针对该修复版的新录像测试明确确认“框能跟随，电脑和微信播放正常”。这确认了本次电脑、摄像头、微信账号和新事件的实际跟随及双端播放，独立收据 `validation-local/tracking-user-acceptance.json` 绑定最终EXE摘要和实现提交；未借用旧版“有框能播放”的结果，也不代表其他场景、遮挡、夜间或多路负载均已验证。本轮未发布GitHub。
 
 ## 历史：事件录像目标框本机 Windows 测试版（2026-10-19）
 
