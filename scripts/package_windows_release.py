@@ -38,6 +38,8 @@ REMOTE_PHONE_CHECKS = ("phone_on_final_exe_verified", "phone_direct_click_verifi
 EVENT_USER_CHECKS = ("box_follows_person_user_confirmed", "computer_playback_user_confirmed",
                      "wechat_video_playback_user_confirmed")
 EVENT_USER_SCOPE = "current computer, camera, WeChat account and fresh event only"
+OBJECT_USER_CHECKS = ("object_box_label_following_user_confirmed", "computer_playback_user_confirmed",
+                      "wechat_list_user_confirmed", "wechat_video_playback_user_confirmed")
 
 
 def validate_bundled_person_assets(executable: Path) -> dict:
@@ -216,6 +218,43 @@ def validate_event_user(record: dict, version: str, digest: str, size: int) -> d
             "scope": "One built-in or USB camera on the current computer, one fresh event, and the current WeChat account; no RTSP, other-device, or long-running acceptance"}
 
 
+def validate_object_user(record: dict, version: str, digest: str, size: int) -> dict:
+    """Keep V3 object acceptance separate from legacy person-following proof."""
+    from nvr.algorithm_catalog import validate_options
+    targets = record.get("targets")
+    confidence = record.get("confidence")
+    options = validate_options({"model_id": record.get("model_id"), "targets": targets,
+                                "confidence": confidence})
+    if record.get("artifact_type") != "Windows executable" or record.get("version") != version \
+            or record.get("exe_sha256") != digest or type(record.get("exe_bytes")) is not int \
+            or record["exe_bytes"] != size or any(record.get(key) is not True for key in OBJECT_USER_CHECKS):
+        raise ValueError("Missing user-confirmed object following and playback for this exact EXE")
+    if record.get("camera_source_type") != "local-camera" or record.get("scope") != EVENT_USER_SCOPE \
+            or len(set(targets)) != len(targets) \
+            or record.get("object_class") not in targets:
+        raise ValueError("Object acceptance requires a supported model, selected class and local-camera scope")
+    revision = record.get("implementation_commit")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Object acceptance requires its implementation commit")
+    recorded = record.get("recorded_at_utc")
+    if not isinstance(recorded, str) or not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})", recorded):
+        raise ValueError("Object acceptance requires an ISO timestamp with timezone")
+    try:
+        verified = datetime.fromisoformat(recorded.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("Object acceptance has an invalid timestamp") from error
+    if verified.utcoffset() != timezone.utc.utcoffset(verified):
+        raise ValueError("Object acceptance recorded_at_utc must use UTC")
+    return {"status": "PASS_USER_CONFIRMED", "verified_date": verified.date().isoformat(),
+            "implementation_commit": revision, "exe_sha256": digest, "exe_bytes": size,
+            "camera_source_type": "local-camera", "model_id": record["model_id"],
+            "confidence": options["confidence"], "targets": options["targets"], "object_class": record["object_class"],
+            **{key: True for key in OBJECT_USER_CHECKS},
+            "scope": "Current computer, local camera, selected model and tested object in a fresh event only; no all-class or all-scene accuracy claim",
+            "phone_object_label": "NOT_VERIFIED"}
+
+
 def write_windows_guide(source: Path, target: Path) -> None:
     if source.is_symlink() or not source.is_file():
         raise ValueError("Release guide must be an ordinary file: " + source.name)
@@ -383,6 +422,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="2.2.2")
     parser.add_argument("--output-dir", type=Path, default=REPO.parent / "deliverables")
+    parser.add_argument("--executable", type=Path, default=REPO / "dist" / "MiniNVR2.exe",
+                        help="Exact previously verified executable; never rebuilds or modifies it")
     parser.add_argument("--build-record", type=Path, default=REPO / "validation-local" / "build-artifact.json")
     parser.add_argument("--startup-record", type=Path, default=REPO / "validation-local" / "startup-exe.json")
     parser.add_argument("--event-record", type=Path,
@@ -391,6 +432,8 @@ def main() -> int:
     parser.add_argument("--phone-record", type=Path, help="User-confirmed preview receipt for the exact EXE")
     parser.add_argument("--event-user-record", type=Path,
                         help="Required since 2.4.0: fresh local-camera person following and playback receipt")
+    parser.add_argument("--object-user-record", type=Path,
+                        help="Required since 3.0.0: selected-object following, labels and playback receipt")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", args.version):
         parser.error("version must have three numeric components")
@@ -399,15 +442,20 @@ def main() -> int:
     preview_release = tuple(map(int, args.version.split("."))) >= (2, 2, 3)
     remote_release = tuple(map(int, args.version.split("."))) >= (2, 3, 0)
     local_camera_release = tuple(map(int, args.version.split("."))) >= (2, 4, 0)
+    algorithm_release = tuple(map(int, args.version.split("."))) >= (3, 0, 0)
     if preview_release and (args.preview_record is None or
                             (not local_camera_release and args.phone_record is None)):
         raise ValueError("Preview releases require --preview-record and --phone-record")
-    if local_camera_release and args.event_user_record is None:
+    if local_camera_release and not algorithm_release and args.event_user_record is None:
         raise ValueError("Local-camera releases require --event-user-record for the exact EXE")
+    if algorithm_release and args.object_user_record is None:
+        raise ValueError("Algorithm-store releases require --object-user-record for the exact EXE")
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     stem = "MiniNVR2-v" + args.version + "-windows-x64"
-    executable = REPO / "dist" / "MiniNVR2.exe"
+    if args.executable.is_symlink() or not args.executable.is_file():
+        raise ValueError("Executable must be an ordinary file")
+    executable = args.executable.resolve()
     if not is_x64_pe(executable):
         raise ValueError("Existing executable is not a Windows x64 PE file")
     original_hash = sha256(executable)
@@ -436,6 +484,10 @@ def main() -> int:
     if args.event_user_record is not None:
         event_user = validate_event_user(read_record(args.event_user_record), args.version,
                                          original_hash, original_size)
+    object_user = None
+    if args.object_user_record is not None:
+        object_user = validate_object_user(read_record(args.object_user_record), args.version,
+                                           original_hash, original_size)
 
     staging = Path(tempfile.mkdtemp(prefix=stem + "-staging-", dir=output))
     root = staging / stem
@@ -476,6 +528,15 @@ def main() -> int:
                        "scope": "One built-in or USB camera on the current computer; fresh event recording and playback only; RTSP not verified"}
         following = {**identity, "scope": "Person box following on one fresh local-camera event; other scenes, occlusion, night conditions and long-running load not verified"}
         live_delivery = {**identity, "scope": "One current WeChat account received and played the fresh local-camera event video; other accounts or devices not verified"}
+    object_following = {"status": "NOT_VERIFIED"}
+    if object_user is not None:
+        identity = {key: object_user[key] for key in
+                    ("status", "verified_date", "implementation_commit", "exe_sha256", "exe_bytes")}
+        object_following = object_user
+        real_camera = {**identity, "source_type": "local-camera",
+                       "scope": "Current computer and local camera; selected-object fresh event recording and playback only"}
+        live_delivery = {**identity, "commands": ["今日事件", "播放第一条"],
+                         "scope": "Current WeChat account received a list and playable event video; object label appearance on the phone was not explicitly confirmed"}
     manifest = {
         "application": "MiniNVR2", "version": args.version, "target": "Windows 10/11 x64",
         "source_commit": commit_id(),
@@ -490,6 +551,7 @@ def main() -> int:
                          "lan_preview_simulation": preview, phone_verification_key: phone_preview,
                          "real_wechat_event_delivery": live_delivery,
                          "real_person_following": following,
+                         "real_object_following": object_following,
                          "other_windows_machines": "NOT_VERIFIED", "real_camera": real_camera},
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -523,6 +585,7 @@ def main() -> int:
         "existing_preview_simulation_evidence": "PASS" if args.preview_record is not None else "NOT_VERIFIED",
         phone_verification_key: phone_preview,
         "real_person_following": following,
+        "real_object_following": object_following,
         "real_camera": real_camera,
         "new_feature_tests_run": False,
         "wechat_quick_start_included": (root / "微信ClawBot-操作步骤.txt").is_file(),

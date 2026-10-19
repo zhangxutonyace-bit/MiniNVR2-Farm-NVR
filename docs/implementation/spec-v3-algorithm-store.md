@@ -118,6 +118,12 @@ The reviewed EXE has replaced only the owned local V3 test process at http://127
 
 Ignored evidence: `v3-review2-build-record.json`, `v3-review2-exe-{assets,startup,preview,events}.json`, `v3-review2-exe-market-flow-*-report.json`, `v3-review2-official-download-{exe,connect}.json`, `v3-root-visual-checks.json`, `v3-reviewed-local-trial.json`, `v3-review/triage.json`. Source/compiled completion and physical acceptance are separate.
 
+### Subsequent Physical Acceptance and Publication Authorization (2026-10-19)
+
+The earlier pending state above is historical. The same reviewed EXE (SHA256 `fcf0f6395d1fcfa49a2c0ef14b6bdfbc8acd58de812311db2b7e06d4e1adcb64`) remained unchanged. NanoDet / 0.35 missed the user's cup even after the requested lighting/visibility re-test; that failed scene is retained. Switching only the active model to the already-supported YOLOX-S, keeping confidence 0.35, yielded fresh user confirmation: “杯子有橙框和标签，移动时能跟随”. This covers the current computer, local camera, tested cup and new event, not all target categories or scenes. The user also confirmed “今日事件 → 播放第一条” returned a list and playable video; readability of the new cup label on the phone was not separately confirmed. V3 mobile external-network preview remains NOT_RETESTED.
+
+The user subsequently explicitly authorized publishing V3.0 to GitHub with the Windows package, Release notes and algorithm-store instructions. This adds publication authorization without changing the frozen implementation intent. Publication and asset verification are tracked separately; see [v3.0.0 Release notes](../RELEASE_v3.0.0.md) and [current validation scope](../VALIDATION.md).
+
 
 ## Suggested Review Order
 
