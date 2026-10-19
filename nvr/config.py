@@ -5,6 +5,7 @@
 源码里不出现写死的 IP、路径、设备名。
 """
 import json
+import hashlib
 import os
 import re
 import sys
@@ -207,16 +208,38 @@ class Config(object):
                 raise ValueError("摄像头 ID 只能包含字母、数字、下划线或短横线，最长 64 字符")
             old = self.get_camera(cid)
             item = dict(old or {})
+            kind = spec.get("source_type", "rtsp")
+            if kind not in ("rtsp", "local"):
+                raise ValueError("不支持的摄像头来源类型")
+            local = {}
+            if kind == "local":
+                device = spec.get("device")
+                device_id = spec.get("device_id")
+                if (not isinstance(device, str) or not device.startswith("@device_")
+                        or len(device) > 2048 or any(c in device for c in ('"', '\r', '\n', '\x00'))
+                        or not isinstance(device_id, str)
+                        or device_id != hashlib.sha256(device.encode("utf-8")).hexdigest()):
+                    raise ValueError("电脑摄像头标识无效，请刷新后重新添加")
+                if any(c.get("id") != cid and c.get("source_type") == "local"
+                       and c.get("device_id") == device_id for c in self.cameras):
+                    raise ValueError("这台电脑摄像头已添加，请在列表中启用已有摄像头")
+                local = {"device_id": device_id, "device": device,
+                         "device_name": str(spec.get("device_name") or "电脑摄像头")[:160]}
+            for field in ("device_id", "device", "device_name"):
+                item.pop(field, None)
             item.update({
                 "id": cid,
                 "name": spec.get("name") or spec.get("url") or cid,
-                "url": spec.get("url") or item.get("url") or "",
+                "source_type": kind,
+                "url": "" if kind == "local" else spec.get("url") or item.get("url") or "",
                 "enabled": bool(spec.get("enabled", True)),
                 "detect": bool(spec.get("detect", True)),
             })
+            item.update(local)
             if old is None:
                 self.data.setdefault("cameras", []).append(item)
             else:
+                old.clear()
                 old.update(item)
             self.save()
             return item

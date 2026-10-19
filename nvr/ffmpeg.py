@@ -308,6 +308,34 @@ def cmd_record(url, out, transport="tcp", timeout=10, transcode=False):
     return cmd
 
 
+def cmd_local_stream(device, fps=8, width=480, quality=6):
+    """Open one video-only DirectShow device; audio is never requested."""
+    if not isinstance(device, str) or not device.startswith("@device_") \
+            or len(device) > 2048 or any(c in device for c in ('"', '\r', '\n', '\x00')):
+        raise ValueError("电脑摄像头标识无效，请刷新设备列表后重新添加。")
+    vf = "fps=%d,scale=%d:-2" % (max(1, min(60, int(fps))), max(160, min(3840, int(width))))
+    return [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-f", "dshow",
+            "-rtbufsize", "16M", "-i", "video=" + device, "-an", "-sn",
+            "-vf", vf, "-c:v", "mjpeg", "-q:v", str(int(quality)),
+            "-f", "image2pipe", "pipe:1"]
+
+
+def cmd_jpeg_record(out, fps=8):
+    """Encode shared JPEGs with arrival-time PTS, including slow writer gaps.
+
+    image2pipe honors wall-clock timestamps; raw mjpeg generates frame-count PTS
+    instead. Direct AVIO and minimal probing avoid accumulating a burst before
+    assigning timestamps. VFR output preserves gaps without a catch-up queue.
+    """
+    return [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-nostdin",
+            "-use_wallclock_as_timestamps", "1", "-avioflags", "direct",
+            "-probesize", "32", "-analyzeduration", "0", "-fpsprobesize", "0",
+            "-f", "image2pipe", "-framerate", str(int(fps)), "-c:v", "mjpeg",
+            "-i", "pipe:0", "-an", "-sn", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+            "-pix_fmt", "yuv420p", "-fps_mode", "vfr", "-movflags", "+faststart", "-f", "mp4", out]
+
+
 def write_concat(files, listf, fps=1):
     """生成 concat 列表（不依赖文件名连续性，Windows 上也稳）。
 

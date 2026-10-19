@@ -22,6 +22,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory, sessio
 
 from . import __version__, discovery
 from .config import Config, records_root
+from . import local_camera
 
 
 def web_dir():
@@ -184,6 +185,7 @@ def create_app(cfg, hub, on_quit=None):
 
     def public_camera(camera):
         item = dict(camera)
+        item.pop("device", None)
         for field in ("url", "stream", "name", "error"):
             if field in item:
                 item[field] = redact_url(item[field])
@@ -207,8 +209,28 @@ def create_app(cfg, hub, on_quit=None):
             if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(results):
                 raise ValueError("扫描结果已失效，请重新扫描")
             spec["url"] = results[index].get("url") or ""
-        if not isinstance(spec.get("url"), str) or not spec["url"].strip():
+        kind = spec.get("source_type", "rtsp")
+        if kind not in ("rtsp", "local"):
+            raise ValueError("不支持的摄像头来源类型")
+        if kind == "local":
+            if any(key in spec and not isinstance(spec[key], bool) for key in ("enabled", "detect")):
+                raise ValueError("电脑摄像头启用和检测开关必须为是或否")
+            if "scan_index" in spec:
+                raise ValueError("扫描结果不能作为电脑摄像头")
+            device_id = spec.get("device_id")
+            if not isinstance(device_id, str) or not re.fullmatch(r"[a-f0-9]{64}", device_id):
+                raise ValueError("请刷新并选择电脑摄像头")
+            devices = local_camera.enumerate_devices()
+            selected = next((d for d in devices if d["device_id"] == device_id), None)
+            if selected is None:
+                raise ValueError("电脑摄像头已断开或设备列表已变化，请刷新后重新选择")
+            spec.update(device=selected["device"], device_name=selected["name"], url="")
+            if not spec.get("name"):
+                spec["name"] = selected["name"]
+        elif not isinstance(spec.get("url"), str) or not spec["url"].strip():
             raise ValueError("请填 RTSP 地址")
+        if "name" in spec and (not isinstance(spec["name"], str) or len(spec["name"]) > 160):
+            raise ValueError("摄像头名称应为不超过 160 字的文字")
         cid = spec.get("id")
         if cid is not None and (not isinstance(cid, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", cid)):
             raise ValueError("摄像头 ID 不合法")
@@ -280,6 +302,7 @@ def create_app(cfg, hub, on_quit=None):
                                         if k not in c or k not in ("enabled", "detect")}))
                 for c in (cfg.cameras or [])]
         return jsonify({"ok": True, "cams": cams,
+                        "detection_enabled": bool(cfg.get("detect", "enabled", default=True)),
                         "mem_mb": mem_mb(), "version": __version__,
                         "scan": public_scan()})
 
@@ -290,6 +313,17 @@ def create_app(cfg, hub, on_quit=None):
         return jsonify(sug)
 
     # ---------------- 摄像头 ----------------
+    @app.route("/api/local-cameras")
+    def api_local_cameras():
+        try:
+            devices = local_camera.enumerate_devices()
+        except ValueError as exc:
+            return jsonify({"ok": False, "devices": [], "msg": str(exc)}), 400
+        used = {c.get("device_id") for c in cfg.cameras if c.get("source_type") == "local"}
+        return jsonify({"ok": True, "devices": [
+            {"device_id": d["device_id"], "name": d["name"], "added": d["device_id"] in used}
+            for d in devices], "msg": "" if devices else "未发现电脑摄像头，请检查连接与驱动后刷新。"})
+
     @app.route("/api/cameras", methods=["POST"])
     @need_auth
     def api_cam_save():
@@ -312,6 +346,8 @@ def create_app(cfg, hub, on_quit=None):
             items = [camera_spec(it) for it in items]
         except ValueError as e:
             return jsonify({"ok": False, "msg": str(e)}), 400
+        if any(it.get("source_type") == "local" for it in items):
+            return jsonify({"ok": False, "msg": "请逐台选择并添加电脑摄像头"}), 400
         exist = {(c.get("url") or ""): c for c in cfg.cameras}
         added = 0
         for it in items:
@@ -656,6 +692,7 @@ def create_app(cfg, hub, on_quit=None):
            or not re.match(r"^\d{4}-\d{2}-\d{2}$", date) \
            or rtype not in ("event", "timelapse") \
            or not name.endswith(".mp4") \
+           or name.endswith((".part.mp4", ".fs.mp4")) \
            or "/" in name or "\\" in name or ".." in name:
             return jsonify({"ok": False, "msg": "参数非法"}), 400
         root = os.path.abspath(records_root(cfg))

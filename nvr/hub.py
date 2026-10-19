@@ -15,6 +15,7 @@ from . import discovery, mailer
 from .camera import Cam
 from .config import log_path, records_root
 from .safety import redact_urls
+from .local_camera import source_identity, worker_identity
 
 
 class Hub(object):
@@ -253,7 +254,7 @@ class Hub(object):
                     continue
                 cam.name = s.get("name") or cam.name
                 cam.detect_on = bool(s.get("detect", True))
-                if cam.url != s.get("url"):
+                if worker_identity(cam) != source_identity(s):
                     cam.stop()
                     self.cams.pop(cid, None)
             # 新增加 / 重新启用

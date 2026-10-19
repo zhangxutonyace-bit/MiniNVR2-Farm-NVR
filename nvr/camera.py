@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """单路摄像头。
 
-一条常驻 ffmpeg：RTSP → 小尺寸 MJPEG 字节流。
+一条常驻 ffmpeg：RTSP 或本机摄像头 → 小尺寸 MJPEG 字节流。
 这一份字节同时供 ①网页预览 ②人形检测 ③抽帧存图 使用 —— 只拉一次、只解一次。
 
-检测到人时另起一条 ffmpeg 用 -c copy 原样封装落盘（优先避免重新编码），人消失即停。
+RTSP 事件优先封装原流；本机事件编码共享 JPEG，不重复打开设备。人消失即停。
 """
 import os
 import subprocess
@@ -19,6 +19,7 @@ from .detect import Detector
 from .ffmpeg import (cmd_record, cmd_stream, ffmpeg_exe, iter_jpegs, popen,
                      probe, run as run_ffmpeg, stop_process)
 from .safety import redact_urls
+from .local_camera import SharedJpegRecorder, source_identity
 
 # 正在做「faststart 重封装」的文件：回放列表要把它们当成「未完成」排除掉，
 # 避免浏览器拿到重写到一半的 mp4。
@@ -101,13 +102,18 @@ class Cam(threading.Thread):
     def __init__(self, spec, cfg, log=None):
         threading.Thread.__init__(self)
         self.daemon = True
-        self.spec = spec
+        # Configuration mutates an existing dict before Hub replaces workers.
+        # Keep capture input immutable for the lifetime of this worker.
+        self.spec = dict(spec)
+        spec = self.spec
         self.cfg = cfg
         self.log = log or (lambda *a: None)
 
         self.id = spec.get("id") or "cam"
         self.name = spec.get("name") or self.id
         self.url = spec.get("url") or ""
+        self.is_local = spec.get("source_type", "rtsp") == "local"
+        self.source_identity = source_identity(spec)
         self.enabled = bool(spec.get("enabled", True))
         self.detect_on = bool(spec.get("detect", True))
 
@@ -146,6 +152,7 @@ class Cam(threading.Thread):
         self.rec_path = ""
         self.rec_t0 = 0.0
         self.rec_transcode = False
+        self._jpeg_recorder = None
 
         # 解码缓存（检测用，避免同一帧重复解码）
         self._dec = None
@@ -182,7 +189,7 @@ class Cam(threading.Thread):
         retry = max(0.1, float(self.cfg.get("stream", "retry_sec", default=5) or 5))
         backoff = retry
         while not self._stop_event.is_set():
-            if not self.enabled or not self.url:
+            if not self.enabled or not (self.spec.get("device") if self.is_local else self.url):
                 self.state = "idle"
                 self._stop_event.wait(1.0)
                 continue
@@ -213,6 +220,9 @@ class Cam(threading.Thread):
     # ---------------- 码流优选（只做一次） ----------------
 
     def _pick_stream(self):
+        if self.is_local:
+            self._picked = True
+            return
         if self._picked or not self.cfg.get("stream", "auto_pick", default=True):
             return
         self._picked = True
@@ -248,6 +258,10 @@ class Cam(threading.Thread):
                          quality=int(s.get("quality", 6) or 6),
                          transport=s.get("transport", "tcp") or "tcp",
                          timeout=float(s.get("timeout_sec", 10) or 10))
+        if self.is_local:
+            from .ffmpeg import cmd_local_stream
+            cmd = cmd_local_stream(self.spec.get("device"), fps=s.get("fps", 8),
+                                   width=s.get("width", 480), quality=s.get("quality", 6))
         with self._proc_lock:
             if self._stop_event.is_set():
                 return
@@ -277,6 +291,8 @@ class Cam(threading.Thread):
 
         if got:
             raise RuntimeError("取流进程结束（流已断）")
+        if self.is_local:
+            raise RuntimeError("电脑摄像头无画面：请检查是否被其他应用占用、Windows 摄像头隐私权限或设备连接")
         raise RuntimeError("连接超时/无数据")
 
     def _tick_fps(self, now):
@@ -313,7 +329,8 @@ class Cam(threading.Thread):
                 reference = max(self.last_ts, self._connect_t0)
                 limit = connect_timeout if self.state == "connecting" else stall
                 if reference and time.time() - reference > limit:
-                    self.last_error = "取流超时/长期无新帧"
+                    self.last_error = ("电脑摄像头超时：请检查占用、Windows 摄像头隐私权限或 USB 连接"
+                                       if self.is_local else "取流超时/长期无新帧")
                     self.log("[看门狗] %s 超过 %.0fs 无新帧，强制重连" %
                              (self.name, limit))
                     self._close_proc()
@@ -362,7 +379,9 @@ class Cam(threading.Thread):
             self._start_record()
 
     def _start_record(self):
-        if self._stop_event.is_set() or self.recording() or not self.url:
+        if self._stop_event.is_set() or self.recording() or (not self.is_local and not self.url):
+            return
+        if self.is_local and (self.state != "online" or not self.snapshot()[0]):
             return
         try:
             day = time.strftime("%Y-%m-%d")
@@ -371,6 +390,16 @@ class Cam(threading.Thread):
             # Include subsecond time to avoid collisions on quick restarts.
             stamp = time.time_ns()
             p = os.path.join(d, time.strftime("%H%M%S") + "_%09d.mp4" % (stamp % 1000000000))
+            if self.is_local:
+                p = p[:-4] + ".part.mp4"
+            self.rec_path = p
+            if self.is_local:
+                self._jpeg_recorder = SharedJpegRecorder(
+                    p, self.snapshot, fps=self.cfg.get("stream", "fps", default=8))
+                self.rec_proc = self._jpeg_recorder.proc
+                self.rec_t0 = time.time()
+                self.log("[事件] %s 检测到人 → 开始录像" % self.name)
+                return
             cmd = cmd_record(self.record_url, p,
                              transport=self.cfg.get("stream", "transport",
                                                     default="tcp"),
@@ -390,6 +419,8 @@ class Cam(threading.Thread):
             self.rec_proc = None
             self.rec_path = ""
             self.rec_t0 = 0.0
+            if self.is_local:
+                self.last_error = "本机事件录像启动失败，请检查磁盘空间与运行日志"
             self.log("[事件] %s 启动录像失败: %s" % (self.name, redact_urls(e)))
 
     def stop_record(self):
@@ -398,14 +429,30 @@ class Cam(threading.Thread):
 
     def _stop_record(self):
         p, self.rec_proc = self.rec_proc, None
-        if p is not None:
+        local_ok = True
+        recorder, self._jpeg_recorder = self._jpeg_recorder, None
+        if recorder is not None:
+            local_ok = recorder.stop()
+        elif p is not None:
             stop_process(p, wait=4.0)
         if self.rec_path:
             try:
                 # 太小的多半是空壳，丢掉免得占目录
-                if os.path.getsize(self.rec_path) < 20 * 1024:
-                    os.remove(self.rec_path)
+                valid = (local_ok and probe(self.rec_path, timeout=2) is not None
+                         if self.is_local else os.path.getsize(self.rec_path) >= 20 * 1024)
+                if not valid:
+                    if self.is_local:
+                        self.last_error = "本机事件录像编码未完成，请检查磁盘空间或运行日志"
+                        self.log("[事件] %s 本机事件录像编码失败，未发布为已完成录像" % self.name)
+                    try:
+                        os.remove(self.rec_path)
+                    except FileNotFoundError:
+                        pass
                 else:
+                    if self.is_local:
+                        completed = self.rec_path[:-len(".part.mp4")] + ".mp4"
+                        os.replace(self.rec_path, completed)
+                        self.rec_path = completed
                     self.log("[事件] %s 人已离开 → 录像 %s（%.0fs）" %
                              (self.name, os.path.basename(self.rec_path),
                               time.time() - self.rec_t0))
@@ -413,7 +460,9 @@ class Cam(threading.Thread):
                     # 收完号后台转成 moov 在头部的格式，回放才能拖动/秒切。
                     schedule_faststart(self.rec_path, self.log)
             except Exception:
-                pass
+                if self.is_local:
+                    self.last_error = "本机事件录像收尾失败，请检查磁盘空间或运行日志"
+                    self.log("[事件] %s 本机事件录像收尾失败" % self.name)
         self.rec_path = ""
         self.rec_t0 = 0.0
 
@@ -466,4 +515,6 @@ class Cam(threading.Thread):
             "stream": self.stream_url, "wh": "%dx%d" % self.stream_wh,
             "person": bool(self.person), "rec": self.recording(),
             "error": self.last_error,
+            "source_type": "local" if self.is_local else "rtsp",
+            "device_name": self.spec.get("device_name", "") if self.is_local else "",
         }

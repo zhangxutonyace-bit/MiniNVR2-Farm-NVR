@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import urllib.parse
+from .local_camera import source_identity, worker_identity
 from collections import OrderedDict
 
 from flask import Flask, Response, jsonify, request, send_from_directory
@@ -163,7 +164,7 @@ class PreviewService:
 
     @staticmethod
     def _camera_key(camera):
-        return camera.get("id"), bool(camera.get("enabled", True)), camera.get("url") or ""
+        return camera.get("id"), bool(camera.get("enabled", True)), source_identity(camera)
 
     def _start_listener(self, port):
         server = _ViewerServer("0.0.0.0", port, self.app, handler=_QuietHandler)
@@ -339,7 +340,7 @@ class PreviewService:
         # Configuration is saved before Hub replaces its asynchronous worker.
         # A new capability must not expose the previous worker's source.
         return (camera is not None and getattr(camera, "id", None) == ticket["cid"]
-                and getattr(camera, "url", None) == ticket["camera"][2]
+                and worker_identity(camera) == ticket["camera"][2]
                 and getattr(camera, "enabled", False))
 
     @classmethod

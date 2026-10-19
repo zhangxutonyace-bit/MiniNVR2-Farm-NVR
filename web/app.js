@@ -116,14 +116,14 @@ function renderCams(cams) {
     camRows = {};
     return;
   }
-  var sig = cams.map(function (c) { return c.id; }).join('|');
+  var sig = JSON.stringify(cams.map(function (c) { return [c.id, c.name, c.url, c.device_name]; }));
   if (sig !== (renderCams.sig || '')) {
     renderCams.sig = sig;
     camRows = {};
     tb.innerHTML = cams.map(function (c) {
       return '<tr data-id="' + esc(c.id) + '">' +
         '<td>' + esc(c.name) + '</td>' +
-        '<td style="color:var(--txt3);font-size:12px">' + esc(c.url) + '</td>' +
+        '<td style="color:var(--txt3);font-size:12px">' + esc(c.source_type === 'local' ? ('电脑摄像头 · ' + (c.device_name || c.name)) : c.url) + '</td>' +
         '<td class="cst"></td>' +
         '<td><label class="switch"><input type="checkbox" class="cdet"' +
         (c.detect ? ' checked' : '') + '><span></span></label></td>' +
@@ -162,6 +162,8 @@ function renderCams(cams) {
       : (c.state === 'connecting' ? '<span class="tag warn">连接中</span>'
         : '<span class="tag off">离线</span>');
     if (c.rec) s += ' <span class="tag warn">录像中</span>';
+    if (!c.enabled) s = '<span class="tag off">已停用</span>';
+    if (c.error && c.enabled) s += '<div class="hint">' + esc(c.error) + '</div>';
     if (r.html !== s) { r.html = s; r.st.innerHTML = s; }
     r.tog.textContent = c.enabled ? '停用' : '启用';
   });
@@ -172,6 +174,52 @@ function loadCams() {
     renderCams(s.cameras || []);
   });
 }
+
+/* Device enumeration never opens a camera; adding is a separate user action. */
+var localDevices = [];
+$('#btnLocalRefresh').onclick = function () {
+  var button = this;
+  button.disabled = true;
+  $('#btnLocalAdd').disabled = true;
+  $('#localDevice').disabled = true;
+  $('#localHint').textContent = '正在读取摄像头列表…';
+  api('/api/local-cameras').then(function (result) {
+    localDevices = result.ok ? (result.devices || []) : [];
+    $('#localDevice').innerHTML = '<option value="">请选择摄像头</option>' + localDevices.map(function (device, index) {
+      return '<option value="' + esc(device.device_id) + '"' + (device.added ? ' disabled' : '') + '>' +
+        esc((index + 1) + '. ' + device.name + (device.added ? '（已添加）' : '')) + '</option>';
+    }).join('');
+    $('#localDevice').disabled = !localDevices.length;
+    $('#localHint').textContent = result.msg || '选择并添加后才打开镜头。已添加设备可在下方启用或停用；不采集麦克风。';
+  }).catch(function (error) {
+    localDevices = [];
+    $('#localHint').textContent = '读取失败：' + error.message;
+  }).finally(function () { button.disabled = false; });
+};
+$('#localDevice').onchange = function () {
+  var selected = localDevices.find(function (device) { return device.device_id === $('#localDevice').value; });
+  $('#btnLocalAdd').disabled = !selected || selected.added;
+  if (selected && !$('#localName').value.trim()) $('#localName').value = selected.name;
+};
+$('#btnLocalAdd').onclick = function () {
+  var selected = localDevices.find(function (device) { return device.device_id === $('#localDevice').value; });
+  if (!selected || selected.added) { toast('请刷新并选择未添加的摄像头', true); return; }
+  $('#btnLocalAdd').disabled = true;
+  api('/api/cameras', { method: 'POST', json: {
+    source_type: 'local', device_id: selected.device_id,
+    name: $('#localName').value.trim() || selected.name, enabled: true, detect: true
+  } }).then(function (result) {
+    toast(result.ok ? '已添加，正在打开摄像头' : result.msg || '添加失败', !result.ok);
+    if (result.ok) {
+      $('#localName').value = '';
+      loadCams();
+      $('#btnLocalRefresh').click();
+    } else { $('#btnLocalAdd').disabled = false; }
+  }).catch(function (error) {
+    toast(error.message || '添加失败', true);
+    $('#btnLocalAdd').disabled = false;
+  });
+};
 
 /* ---------------- 扫描 ---------------- */
 var scanTimer = null;
@@ -287,6 +335,9 @@ function fillSettings(s) {
   $('#stFps').value = st.fps; $('#stWidth').value = st.width;
   $('#stTransport').value = st.transport || 'tcp'; $('#stRetry').value = st.retry_sec;
   $('#dtEn').checked = !!dt.enabled; $('#dtMode').value = dt.mode || 'auto';
+  $('#localDetectHint').textContent = dt.enabled
+    ? '沿用现有检测设置与事件录像规则；请确认下方这路摄像头“识别人”开关已打开。'
+    : '全局人形检测已关闭：仍可预览和抽帧，但不会触发事件录像。请到“设置”启用检测。';
   $('#dtInt').value = dt.interval; $('#dtConfirm').value = dt.confirm;
   $('#dtGone').value = dt.gone_sec;
   $('#rdTl').value = rd.timelapse_sec; $('#rdKeep').value = rd.keep_days;
@@ -469,6 +520,9 @@ function tick() {
     refreshRemotePreview();
   }
   api('/api/status').then(function (s) {
+    $('#localDetectHint').textContent = s.detection_enabled
+      ? '沿用现有检测设置与事件录像规则；请确认下方这路摄像头“识别人”开关已打开。'
+      : '全局人形检测已关闭：仍可预览和抽帧，但不会触发事件录像。请到“设置”启用检测。';
     renderWall(s.cams || []);
     var list = s.cams || [];
     if (!$('#tab-cams').hidden) renderCams(list);

@@ -124,6 +124,18 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
   <!-- ============ 摄像头 ============ -->
   <section id="tab-cams" hidden>
     <div class="card">
+      <h3>电脑摄像头</h3>
+      <div class="row">
+        <div><button id="btnLocalRefresh" class="line">刷新设备列表</button></div>
+        <div style="flex:2 1 240px"><label>内置或 USB 摄像头</label>
+          <select class="inp" id="localDevice" style="width:100%" disabled><option value="">请先刷新设备列表</option></select></div>
+        <div style="flex:1 1 180px"><label>名称</label><input class="inp" id="localName" placeholder="例如：电脑摄像头" style="width:100%"></div>
+        <div><button id="btnLocalAdd" disabled>添加并启用</button></div>
+      </div>
+      <div class="hint" id="localHint">刷新只读取设备名称。选择并添加后才打开镜头，不采集麦克风。</div>
+      <div class="hint" id="localDetectHint">沿用现有检测设置与事件录像规则；画面预览、检测和录像共用一次设备采集。</div>
+    </div>
+    <div class="card">
       <h3>扫描本网段</h3>
       <div class="row">
         <div style="flex:2 1 220px"><label>IP 范围（留空 = 自动识别本机网段）</label>
