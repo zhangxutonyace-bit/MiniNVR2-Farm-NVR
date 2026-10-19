@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import cv2
@@ -37,6 +38,20 @@ class MediaTests(OfflineTestCase):
         return Cam({"id": "sample", "name": "Synthetic camera", "url": self.source,
                     "enabled": True, "detect": False}, self.cfg)
 
+    def test_bounded_validation_decodes_both_ends_of_long_synthetic_video(self):
+        self.assertTrue(ffmpeg.validate_video(self.source))
+
+    def test_validation_rejects_actual_late_truncated_tail(self):
+        staged = self.root / "tail-check.part.mp4"
+        result = ffmpeg.run([self.ff, "-hide_banner", "-loglevel", "error", "-y",
+                             "-i", self.source, "-c", "copy", "-movflags", "+faststart", str(staged)],
+                            capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(ffmpeg.validate_video(str(staged)))
+        raw = staged.read_bytes()
+        staged.write_bytes(raw[:-256])
+        self.assertFalse(ffmpeg.validate_video(str(staged)))
+
     def test_preview_jpeg_timelapse_and_clean_shutdown(self):
         self.cfg.set("record", "timelapse_sec", 0.25, save=False)
         camera = self.new_camera()
@@ -66,6 +81,7 @@ class MediaTests(OfflineTestCase):
         self.assertIsNotNone(process.poll())
 
     def test_event_recording_finalizes_playable_faststart_mp4(self):
+        self.cfg.set("record", "target_boxes", False, save=False)
         camera = self.new_camera()
         self.addCleanup(camera.stop)
         camera.start_record()
@@ -107,6 +123,16 @@ class MediaTests(OfflineTestCase):
 
 
 class StreamAndDetectionTests(unittest.TestCase):
+    def test_event_validation_rejects_timeout_or_missing_end_sample(self):
+        with tempfile.NamedTemporaryFile(suffix=".part.mp4") as output:
+            for result in (SimpleNamespace(returncode=0, stdout=b"0, 0, 0, 1, 100, hash\n"),
+                           SimpleNamespace(returncode=1, stdout=b"0, 0, 0, 1, 100, hash\n1, 0, 0, 1, 100, hash\n")):
+                with mock.patch("nvr.ffmpeg.run", return_value=result) as runner:
+                    self.assertFalse(ffmpeg.validate_video(output.name))
+                    self.assertEqual(runner.call_args.kwargs["timeout"], 3)
+            with mock.patch("nvr.ffmpeg.run", side_effect=subprocess.TimeoutExpired("fixture", 3)):
+                self.assertFalse(ffmpeg.validate_video(output.name))
+
     def test_real_haar_model_and_classifier_are_available_and_executable(self):
         """Verify the installed OpenCV API/assets, not detection accuracy."""
         model_path = _haar_path()

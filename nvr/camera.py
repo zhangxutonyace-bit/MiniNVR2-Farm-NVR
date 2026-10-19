@@ -14,10 +14,11 @@ import time
 import cv2
 import numpy as np
 
-from .config import records_root
+from .config import records_root, validate_target_options
 from .detect import Detector
+from .event_overlay import AnnotationRunner, EventOverlay, FramePacket
 from .ffmpeg import (cmd_record, cmd_stream, ffmpeg_exe, iter_jpegs, popen,
-                     probe, run as run_ffmpeg, stop_process)
+                     run as run_ffmpeg, stop_process, validate_video)
 from .safety import redact_urls
 from .local_camera import SharedJpegRecorder, source_identity
 
@@ -136,6 +137,7 @@ class Cam(threading.Thread):
         self.last_jpeg = b""
         self.last_ts = 0.0
         self.seq = 0
+        self._capture_epoch = 0
         self.fps = 0.0
         self._fps_n = 0
         self._fps_t0 = 0.0
@@ -153,6 +155,12 @@ class Cam(threading.Thread):
         self.rec_t0 = 0.0
         self.rec_transcode = False
         self._jpeg_recorder = None
+        self._record_shared = False
+        self.record_options = None
+        self.annotation_warning = ""
+        self._annotation_state_lock = threading.Lock()
+        self._annotation_runner = AnnotationRunner()
+        self._annotation_event = None
 
         # 解码缓存（检测用，避免同一帧重复解码）
         self._dec = None
@@ -269,6 +277,8 @@ class Cam(threading.Thread):
             self._connect_t0 = time.time()
             proc = popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             self.proc = proc
+        with self.lock:
+            self._capture_epoch += 1
         self._fps_n = 0
         self._fps_t0 = time.time()
         got = False
@@ -374,28 +384,54 @@ class Cam(threading.Thread):
 
     # ---------------- 事件录像（有人 → 开，人走 → 停） ----------------
 
-    def start_record(self):
+    def start_record(self, trigger=None):
         with self._rec_lock:
-            self._start_record()
+            self._start_record(trigger)
 
-    def _start_record(self):
+    def _start_record(self, trigger=None):
         if self._stop_event.is_set() or self.recording() or (not self.is_local and not self.url):
             return
-        if self.is_local and (self.state != "online" or not self.snapshot()[0]):
-            return
         try:
+            with self.cfg.lock:
+                options = validate_target_options(dict(self.cfg.get("record")))
+                detect_options = dict(self.cfg.get("detect"))
+                fps = self.cfg.get("stream", "fps", default=8)
+            shared = self.is_local or options["target_boxes"]
+            if shared and (self.state != "online" or not self.snapshot()[0]):
+                return
+            if options["target_boxes"] and trigger is not None:
+                current = self.record_sample()
+                stall = max(1.0, float(self.cfg.get("stream", "stall_sec", default=25) or 25))
+                if (not current.jpeg or trigger.source != current.source
+                        or trigger.seq > current.seq or not trigger.timestamp
+                        or time.time() - trigger.timestamp > stall):
+                    trigger = None
+            self.record_options = options
+            self._record_shared = shared
+            with self._annotation_state_lock:
+                self.annotation_warning = ""
+                self._annotation_event = object()
+                event_token = self._annotation_event
             day = time.strftime("%Y-%m-%d")
             d = os.path.join(records_root(self.cfg), self.id, day, "event")
             os.makedirs(d, exist_ok=True)
             # Include subsecond time to avoid collisions on quick restarts.
             stamp = time.time_ns()
             p = os.path.join(d, time.strftime("%H%M%S") + "_%09d.mp4" % (stamp % 1000000000))
-            if self.is_local:
+            if shared:
                 p = p[:-4] + ".part.mp4"
             self.rec_path = p
-            if self.is_local:
+            if shared:
+                overlay = (EventOverlay(options["target_box_color"], detect_options,
+                                        warning=lambda message: self._annotation_failed(message, event_token),
+                                        log=self.log)
+                           if options["target_boxes"] else None)
                 self._jpeg_recorder = SharedJpegRecorder(
-                    p, self.snapshot, fps=self.cfg.get("stream", "fps", default=8))
+                    p, self.record_sample if overlay else self.snapshot, fps=fps,
+                    transform=overlay.render if overlay else None,
+                    initial=trigger if overlay else None,
+                    annotation_runner=self._annotation_runner,
+                    annotation_failure=overlay.failed if overlay else None)
                 self.rec_proc = self._jpeg_recorder.proc
                 self.rec_t0 = time.time()
                 self.log("[事件] %s 检测到人 → 开始录像" % self.name)
@@ -419,9 +455,21 @@ class Cam(threading.Thread):
             self.rec_proc = None
             self.rec_path = ""
             self.rec_t0 = 0.0
-            if self.is_local:
-                self.last_error = "本机事件录像启动失败，请检查磁盘空间与运行日志"
+            self._record_shared = False
+            with self._annotation_state_lock:
+                self._annotation_event = None
+            self.last_error = "事件录像启动失败，请检查设置、磁盘空间与运行日志"
             self.log("[事件] %s 启动录像失败: %s" % (self.name, redact_urls(e)))
+
+    def _annotation_failed(self, message, event_token=None):
+        with self._annotation_state_lock:
+            if event_token is not None and event_token is not self._annotation_event:
+                return
+            self.annotation_warning = message
+        try:
+            self.log(redact_urls("[事件] %s %s" % (self.name, message)))
+        except Exception:
+            pass
 
     def stop_record(self):
         with self._rec_lock:
@@ -431,6 +479,7 @@ class Cam(threading.Thread):
         p, self.rec_proc = self.rec_proc, None
         local_ok = True
         recorder, self._jpeg_recorder = self._jpeg_recorder, None
+        shared = self._record_shared or self.is_local or recorder is not None
         if recorder is not None:
             local_ok = recorder.stop()
         elif p is not None:
@@ -438,18 +487,24 @@ class Cam(threading.Thread):
         if self.rec_path:
             try:
                 # 太小的多半是空壳，丢掉免得占目录
-                valid = (local_ok and probe(self.rec_path, timeout=2) is not None
-                         if self.is_local else os.path.getsize(self.rec_path) >= 20 * 1024)
+                valid = (local_ok and validate_video(self.rec_path)
+                         if shared else os.path.getsize(self.rec_path) >= 20 * 1024)
                 if not valid:
-                    if self.is_local:
-                        self.last_error = "本机事件录像编码未完成，请检查磁盘空间或运行日志"
-                        self.log("[事件] %s 本机事件录像编码失败，未发布为已完成录像" % self.name)
-                    try:
-                        os.remove(self.rec_path)
-                    except FileNotFoundError:
-                        pass
+                    retained = (shared and local_ok and os.path.isfile(self.rec_path)
+                                and os.path.getsize(self.rec_path) > 0)
+                    if retained:
+                        self.last_error = "事件录像已保留为待校验文件 %s，暂不提供回放；请查看运行日志" % os.path.basename(self.rec_path)
+                        self.log("[事件] %s %s" % (self.name, self.last_error))
+                    elif shared:
+                        self.last_error = "事件录像编码未完成，请检查磁盘空间或运行日志"
+                        self.log("[事件] %s 事件录像编码失败，未发布为已完成录像" % self.name)
+                    if not retained:
+                        try:
+                            os.remove(self.rec_path)
+                        except FileNotFoundError:
+                            pass
                 else:
-                    if self.is_local:
+                    if shared:
                         completed = self.rec_path[:-len(".part.mp4")] + ".mp4"
                         os.replace(self.rec_path, completed)
                         self.rec_path = completed
@@ -460,11 +515,14 @@ class Cam(threading.Thread):
                     # 收完号后台转成 moov 在头部的格式，回放才能拖动/秒切。
                     schedule_faststart(self.rec_path, self.log)
             except Exception:
-                if self.is_local:
-                    self.last_error = "本机事件录像收尾失败，请检查磁盘空间或运行日志"
-                    self.log("[事件] %s 本机事件录像收尾失败" % self.name)
+                if shared:
+                    self.last_error = "事件录像收尾失败，请检查磁盘空间或运行日志"
+                    self.log("[事件] %s 事件录像收尾失败" % self.name)
         self.rec_path = ""
         self.rec_t0 = 0.0
+        self._record_shared = False
+        with self._annotation_state_lock:
+            self._annotation_event = None
 
     def recording(self):
         with self._rec_lock:
@@ -485,18 +543,34 @@ class Cam(threading.Thread):
 
     def frame_bgr(self):
         """解码后的小图（检测用，同帧只解一次）。"""
+        return self.frame_sample()[0]
+
+    def record_sample(self):
+        """One atomic capture packet; never attach another frame's detection."""
         with self.lock:
-            jpeg, seq = self.last_jpeg, self.seq
+            packet = FramePacket(self.last_jpeg, self.seq, self.last_ts,
+                                 (self.source_identity, self._capture_epoch))
+        stall = max(1.0, float(self.cfg.get("stream", "stall_sec", default=25) or 25))
+        if self.state != "online" or not packet.timestamp or time.time() - packet.timestamp > stall:
+            return FramePacket(b"", packet.seq, packet.timestamp, packet.source)
+        return packet
+
+    def frame_sample(self):
+        """Return the decoded image AND the bytes/sequence actually decoded."""
+        with self.lock:
+            packet = FramePacket(self.last_jpeg, self.seq, self.last_ts,
+                                 (self.source_identity, self._capture_epoch))
+        jpeg, seq = packet.jpeg, packet.seq
         if not jpeg:
-            return None
+            return None, packet
         if seq == self._dec_seq and self._dec is not None:
-            return self._dec
+            return self._dec, packet
         try:
             img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
         except Exception:
             img = None
         self._dec, self._dec_seq = img, seq
-        return img
+        return img, packet
 
     def ensure_detector(self):
         opts = self.cfg.get("detect")
@@ -515,6 +589,7 @@ class Cam(threading.Thread):
             "stream": self.stream_url, "wh": "%dx%d" % self.stream_wh,
             "person": bool(self.person), "rec": self.recording(),
             "error": self.last_error,
+            "annotation_warning": self.annotation_warning,
             "source_type": "local" if self.is_local else "rtsp",
             "device_name": self.spec.get("device_name", "") if self.is_local else "",
         }

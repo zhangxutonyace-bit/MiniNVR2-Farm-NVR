@@ -9,6 +9,7 @@ import re
 import subprocess
 import threading
 import time
+from .event_overlay import AnnotationRunner
 
 from . import ffmpeg
 
@@ -64,8 +65,16 @@ def enumerate_devices(timeout=6):
 
 class SharedJpegRecorder:
     """One bounded writer thread. EOF, never interactive 'q', closes MJPEG input."""
-    def __init__(self, path, snapshot, fps=8, log=None):
+    def __init__(self, path, snapshot, fps=8, log=None, transform=None, initial=None,
+                 write_timeout=2.0, annotation_runner=None, annotation_failure=None):
         self.snapshot = snapshot
+        self.transform = transform
+        self.annotation_runner = annotation_runner or AnnotationRunner()
+        self.annotation_failure = annotation_failure or (lambda error: None)
+        self._annotation_retired = False
+        self.initial = initial
+        self.write_timeout = max(0.1, float(write_timeout))
+        self._write_started = 0.0
         self.fps = max(1, min(60, int(fps)))
         self.log = log or (lambda message: None)
         self.stop_event = threading.Event()
@@ -75,8 +84,10 @@ class SharedJpegRecorder:
                                  stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL, bufsize=0)
         self.thread = threading.Thread(target=self._write, name="nvr-webcam-event", daemon=True)
+        self.watch = threading.Thread(target=self._watch_write, name="nvr-event-pipe-watch", daemon=True)
         try:
             self.thread.start()
+            self.watch.start()
         except Exception:
             self.proc.terminate()
             self.proc.wait(timeout=2)
@@ -88,10 +99,18 @@ class SharedJpegRecorder:
         deadline = time.monotonic()
         try:
             while not self.stop_event.is_set():
-                jpeg = self.snapshot()[0]
+                sample, self.initial = self.initial, None
+                if sample is None:
+                    sample = self.snapshot()
+                if self.transform and not self._annotation_retired:
+                    jpeg = self.annotation_runner.render(self.transform, sample, self.stop_event,
+                                                         self._annotation_failed)
+                else:
+                    jpeg = sample.jpeg if hasattr(sample, "jpeg") else sample[0]
                 if jpeg:
                     # Unbuffered OS pipes can accept a partial frame.
                     pending = memoryview(jpeg)
+                    self._write_started = time.monotonic()
                     while pending and not self.stop_event.is_set():
                         count = self.proc.stdin.write(pending)
                         if not count:
@@ -99,6 +118,7 @@ class SharedJpegRecorder:
                         pending = pending[count:]
                     if not pending:
                         self.frames += 1
+                    self._write_started = 0.0
                 deadline += period
                 delay = deadline - time.monotonic()
                 if delay < -period:
@@ -109,12 +129,31 @@ class SharedJpegRecorder:
                 elif delay > 0 and self.stop_event.wait(delay):
                     break
         except Exception:
-            self.failed = not self.stop_event.is_set()
+            self.failed = self.failed or not self.stop_event.is_set()
         finally:
+            self._write_started = 0.0
             try:
                 self.proc.stdin.close()
             except (OSError, ValueError):
                 pass
+
+    def _annotation_failed(self, error):
+        if isinstance(error, TimeoutError):
+            # This event's detector may still be mutating in a native call.
+            # Retire it permanently; a later event gets a fresh detector.
+            self._annotation_retired = True
+        self.annotation_failure(error)
+
+    def _watch_write(self):
+        while not self.stop_event.wait(0.1):
+            if not self.thread.is_alive():
+                return
+            started = self._write_started
+            if started and time.monotonic() - started > self.write_timeout:
+                self.failed = True
+                self.stop_event.set()
+                self._terminate()
+                return
 
     def stop(self):
         self.stop_event.set()
@@ -124,6 +163,7 @@ class SharedJpegRecorder:
             self.failed = True
             self._terminate()
             self.thread.join(timeout=2)
+        self.watch.join(timeout=2)
         try:
             self.proc.wait(timeout=4)
         except subprocess.TimeoutExpired:

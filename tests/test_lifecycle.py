@@ -5,6 +5,7 @@ from unittest import mock
 
 from nvr.camera import Cam
 from nvr.hub import Hub
+from nvr.event_overlay import FramePacket
 from tests.support import OfflineTestCase
 
 
@@ -46,7 +47,7 @@ class LifecycleTests(OfflineTestCase):
         hub = self.new_idle_hub()
         camera = SimpleNamespace(person=True, hit=4, detect_on=True, state="online", seq=9,
                                  _last_detection_seq=9, last_person=time.time() - 100,
-                                 last_event_end=0, frame_bgr=mock.Mock(return_value=object()),
+                                 last_event_end=0, frame_sample=mock.Mock(return_value=(object(), FramePacket(b"", 9, 0, ()))),
                                  ensure_detector=mock.Mock(), stop_record=mock.Mock())
         hub.cams = {"sample": camera}
         hub._stop = mock.Mock()

@@ -434,7 +434,19 @@ def create_app(cfg, hub, on_quit=None):
     @app.route("/api/settings", methods=["POST"])
     @need_auth
     def api_settings_save():
-        d = request.get_json(silent=True) or {}
+        d = request.get_json(silent=True)
+        if not isinstance(d, dict):
+            return jsonify({"ok": False, "msg": "设置必须为对象"}), 400
+        if "record" in d:
+            from .config import validate_target_options
+            try:
+                if not isinstance(d["record"], dict):
+                    raise ValueError("录像设置必须为对象")
+                proposed_record = dict(cfg.get("record"))
+                proposed_record.update(d["record"])
+                validate_target_options(proposed_record)
+            except ValueError as exc:
+                return jsonify({"ok": False, "msg": str(exc)}), 400
         if "remote_preview" in d:
             remote = d["remote_preview"]
             if (not isinstance(remote, dict) or set(remote) - {"enabled"}
@@ -453,15 +465,16 @@ def create_app(cfg, hub, on_quit=None):
         new_token = (d.get("server") or {}).get("token") if isinstance(d.get("server"), dict) else None
         if new_token is not None and not isinstance(new_token, str):
             return jsonify({"ok": False, "msg": "访问口令必须为文字"}), 400
-        for sec, vals in d.items():
-            if sec in _SEC and isinstance(vals, dict):
-                for k, v in vals.items():
-                    if k.endswith("_configured"):
-                        continue
-                    if k in _SECRETS.get(sec, ()) and not v:
-                        continue  # An empty password field keeps the existing credential.
-                    cfg.set(sec, k, v, save=False)
-        cfg.save()
+        with cfg.lock:
+            for sec, vals in d.items():
+                if sec in _SEC and isinstance(vals, dict):
+                    for k, v in vals.items():
+                        if k.endswith("_configured"):
+                            continue
+                        if k in _SECRETS.get(sec, ()) and not v:
+                            continue  # An empty password field keeps the existing credential.
+                        cfg.set(sec, k, v, save=False)
+            cfg.save()
         if new_token:
             session.clear()
             session["auth"] = token_fingerprint(new_token)

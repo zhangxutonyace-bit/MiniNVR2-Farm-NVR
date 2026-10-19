@@ -16,6 +16,7 @@ import numpy as np
 from nvr import ffmpeg, local_camera
 from nvr.camera import Cam
 from nvr.detect import Detector
+from nvr.event_overlay import FramePacket
 from nvr.hub import Hub
 from nvr.preview import PreviewService, RemotePreviewService
 from nvr.server import create_app
@@ -226,11 +227,13 @@ class LocalLifecycleTests(OfflineTestCase):
         self.cfg.set("detect", "cooldown", 0, save=False)
         camera = Cam(spec(), self.cfg)
         camera.state = "online"
-        camera.frame_bgr = mock.Mock(return_value=object())
+        image = np.zeros((180, 320, 3), np.uint8)
+        camera.frame_sample = mock.Mock()
         detector = mock.Mock()
+        detector.confirmed_boxes, detector.provenance = [], "motion"
         camera.ensure_detector = mock.Mock(return_value=detector)
         active = [False]
-        camera.start_record = mock.Mock(side_effect=lambda: active.__setitem__(0, True))
+        camera.start_record = mock.Mock(side_effect=lambda *args: active.__setitem__(0, True))
         camera.stop_record = mock.Mock(side_effect=lambda: active.__setitem__(0, False))
         camera.recording = mock.Mock(side_effect=lambda: active[0])
         hub = self.idle_hub()
@@ -240,6 +243,7 @@ class LocalLifecycleTests(OfflineTestCase):
         hub._stop.wait.return_value = True
         for seq, positive, now in ((1, True, 100), (2, True, 100.5), (3, False, 102)):
             camera.seq = seq
+            camera.frame_sample.return_value = (image, FramePacket(b"fixture", seq, now, ()))
             detector.process.return_value = positive
             with mock.patch("nvr.hub.time.time", return_value=now):
                 hub._detect_loop()
@@ -439,3 +443,37 @@ class LocalMediaTests(OfflineTestCase):
         recorder.thread.join(2)
         self.assertTrue(recorder.failed)
         self.assertFalse(recorder.stop())
+
+    def test_blocked_writer_times_out_during_recording_without_stalling_capture(self):
+        blocked, release = threading.Event(), threading.Event()
+        process = mock.Mock()
+        process.returncode = None
+        process.poll.side_effect = lambda: process.returncode
+        def write(payload):
+            blocked.set()
+            release.wait(5)
+            raise BrokenPipeError("fixture closed")
+        process.stdin.write.side_effect = write
+        def terminate():
+            process.returncode = -15
+            release.set()
+        process.terminate.side_effect = terminate
+        jpeg = self.jpeg()
+        with mock.patch("nvr.local_camera.ffmpeg.popen", return_value=process):
+            recorder = local_camera.SharedJpegRecorder("fixture.mp4", lambda: (jpeg, 1), write_timeout=0.4)
+        try:
+            self.assertTrue(blocked.wait(2))
+            camera = Cam(spec(), self.cfg)
+            capture = SimpleNamespace(stdout=io.BytesIO(jpeg * 4), poll=lambda: None)
+            started = time.monotonic()
+            with mock.patch("nvr.camera.popen", return_value=capture):
+                with self.assertRaisesRegex(RuntimeError, "流已断"):
+                    camera._pump()
+            self.assertLess(time.monotonic() - started, 0.3)
+            self.assertEqual(camera.snapshot(), (jpeg, 4))
+            self.assertTrue(release.wait(2), "Writer deadline must fire without calling stop()")
+            self.assertFalse(recorder.stop())
+            self.assertTrue(recorder.failed)
+        finally:
+            release.set()
+            recorder.stop()

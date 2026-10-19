@@ -95,6 +95,8 @@ _DEFAULTS = {
         "timelapse_sec": 720,   # 每 N 现实秒存 1 帧（720 → 全天 120 帧 = 2 分钟）
         "out_fps": 1,           # 抽帧视频输出帧率
         "max_event_min": 30,    # 单次事件最长录像（分钟）
+        "target_boxes": True,
+        "target_box_color": "#F51616",
     },
 
     "mail": {
@@ -133,6 +135,19 @@ _DEFAULTS = {
 
     "system": {"autostart": False, "close_to_tray": True},
 }
+
+TARGET_BOX_COLORS = ("#F51616", "#E86D08", "#0931C0")
+
+
+def validate_target_options(options):
+    """Strict validation before settings mutation or launching an encoder."""
+    enabled = options.get("target_boxes", True)
+    color = options.get("target_box_color", TARGET_BOX_COLORS[0])
+    if type(enabled) is not bool:
+        raise ValueError("事件录像显示目标框必须为是或否")
+    if not isinstance(color, str) or color not in TARGET_BOX_COLORS:
+        raise ValueError("目标框颜色只能选择红色、橙色或深蓝色")
+    return {"target_boxes": enabled, "target_box_color": color}
 
 
 def _deep_merge(base, over):

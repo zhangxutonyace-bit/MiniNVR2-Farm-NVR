@@ -236,6 +236,13 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
     <div class="card">
       <h3>录像</h3>
       <div class="row">
+        <div><label class="switch"><input type="checkbox" id="rdBoxes"><span>事件录像显示目标框</span></label></div>
+        <div><label>目标框颜色</label><select class="inp" id="rdBoxColor">
+          <option value="#F51616">红色</option><option value="#E86D08">橙色</option>
+          <option value="#0931C0">深蓝色</option></select></div>
+      </div>
+      <div class="hint">默认打开，下次事件开始生效。打开后按预览分辨率（通常宽 480 像素）重新编码，RTSP 录像清晰度可能降低，CPU 占用增加；关闭后沿用原录像方式。仅描边、不填充，颜色只用于适应背景。移动侦测框表示移动区域，不能视为已确认的人；静止目标可能无框。处理失败时保留原画面，并在摄像头状态提示。</div>
+      <div class="row">
         <div><label>抽帧间隔(秒)</label><input class="inp" id="rdTl" type="number" min="10" style="width:110px"></div>
         <div><label>保留天数</label><input class="inp" id="rdKeep" type="number" min="1" style="width:90px"></div>
         <div><label>单次事件上限(分钟)</label><input class="inp" id="rdMax" type="number" min="1" style="width:110px"></div>

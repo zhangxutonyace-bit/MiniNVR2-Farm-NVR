@@ -326,8 +326,8 @@ class Hub(object):
                             cam.stop_record()
                             cam.last_event_end = time.time()
                         continue
-                    img = cam.frame_bgr()
-                    seq = getattr(cam, "seq", None)
+                    img, packet = cam.frame_sample()
+                    seq = packet.seq
                     if img is None or (seq is not None and seq == getattr(cam, "_last_detection_seq", None)):
                         if cam.person and time.time() - cam.last_person > gone:
                             cam.person = False
@@ -337,7 +337,9 @@ class Hub(object):
                         continue
                     cam._last_detection_seq = seq
                     try:
-                        has = cam.ensure_detector().process(img)
+                        detector = cam.ensure_detector()
+                        has = detector.process(img)
+                        trigger = packet.detected(detector, img, has)
                     except Exception:
                         has = False
                     if has:
@@ -346,7 +348,7 @@ class Hub(object):
                         if cam.hit >= confirm:
                             cam.person = True
                             if not cam.recording() and (time.time() - cam.last_event_end) >= cool:
-                                cam.start_record()
+                                cam.start_record(trigger)
                     else:
                         cam.hit = 0
                         if cam.person and (time.time() - cam.last_person) > gone:

@@ -164,6 +164,7 @@ function renderCams(cams) {
     if (c.rec) s += ' <span class="tag warn">录像中</span>';
     if (!c.enabled) s = '<span class="tag off">已停用</span>';
     if (c.error && c.enabled) s += '<div class="hint">' + esc(c.error) + '</div>';
+    if (c.annotation_warning && c.enabled) s += '<div class="hint">⚠ ' + esc(c.annotation_warning) + '</div>';
     if (r.html !== s) { r.html = s; r.st.innerHTML = s; }
     r.tog.textContent = c.enabled ? '停用' : '启用';
   });
@@ -342,6 +343,8 @@ function fillSettings(s) {
   $('#dtGone').value = dt.gone_sec;
   $('#rdTl').value = rd.timelapse_sec; $('#rdKeep').value = rd.keep_days;
   $('#rdMax').value = rd.max_event_min;
+  $('#rdBoxes').checked = rd.target_boxes !== false;
+  $('#rdBoxColor').value = rd.target_box_color || '#F51616';
   $('#mlEn').checked = !!ml.enabled; $('#mlTime').value = ml.time || '08:00';
   $('#mlHost').value = ml.smtp_host || ''; $('#mlPort').value = ml.smtp_port || 465;
   $('#mlUser').value = ml.user || ''; $('#mlPass').value = ml.pass || '';
@@ -374,7 +377,8 @@ $('#btnSave').onclick = function () {
               interval: +$('#dtInt').value || 0.5, confirm: +$('#dtConfirm').value || 2,
               gone_sec: +$('#dtGone').value || 8 },
     record: { timelapse_sec: +$('#rdTl').value || 720, keep_days: +$('#rdKeep').value || 7,
-              max_event_min: +$('#rdMax').value || 30 },
+              max_event_min: +$('#rdMax').value || 30, target_boxes: $('#rdBoxes').checked,
+              target_box_color: $('#rdBoxColor').value },
     mail: { enabled: $('#mlEn').checked, time: $('#mlTime').value.trim() || '08:00',
             smtp_host: $('#mlHost').value.trim(), smtp_port: +$('#mlPort').value || 465,
             user: $('#mlUser').value.trim(), pass: $('#mlPass').value,

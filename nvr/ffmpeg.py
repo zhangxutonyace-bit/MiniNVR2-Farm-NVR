@@ -336,6 +336,30 @@ def cmd_jpeg_record(out, fps=8):
             "-pix_fmt", "yuv420p", "-fps_mode", "vfr", "-movflags", "+faststart", "-f", "mp4", out]
 
 
+def validate_video(path, timeout=3):
+    """Bounded real decode of both ends of a staged MP4 before publication.
+
+    A successful encoder exit plus decoded first/tail frame hashes verifies the
+    container and decodes the last two seconds through EOF without a long event inside the
+    global detection scheduler. This is deliberately not a whole-file audit.
+    """
+    if not os.path.isfile(path):
+        return False
+    try:
+        result = run([ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-xerror",
+                      "-i", path, "-sseof", "-2", "-i", path,
+                      "-map", "0:v:0", "-map", "1:v:0",
+                      "-frames:v:0", "1", "-f", "framehash", "-"],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                     stderr=subprocess.PIPE, timeout=timeout)
+        samples = {(line.split(",", 1)[0]).strip()
+                   for line in (result.stdout or b"").decode("utf-8", "replace").splitlines()
+                   if line and not line.startswith("#") and "," in line}
+        return result.returncode == 0 and {"0", "1"}.issubset(samples)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def write_concat(files, listf, fps=1):
     """生成 concat 列表（不依赖文件名连续性，Windows 上也稳）。
 

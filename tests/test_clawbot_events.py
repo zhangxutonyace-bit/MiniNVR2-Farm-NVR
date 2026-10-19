@@ -408,6 +408,7 @@ class ClawBotEventTests(EventFixture):
             self.assertIn(selected, hub.recording_paths())
 
     def test_hub_excludes_event_until_recorder_launch_finishes(self):
+        self.cfg.set("record", "target_boxes", False, save=False)
         from nvr.camera import Cam
         from nvr.hub import Hub
         cam = Cam(self.cfg.get_camera("farm"), self.cfg)
@@ -434,6 +435,7 @@ class ClawBotEventTests(EventFixture):
         self.assertIn(cam.rec_path, hub.recording_paths())
 
     def test_recorder_launch_failure_clears_busy_state(self):
+        self.cfg.set("record", "target_boxes", False, save=False)
         from nvr.camera import Cam
         from nvr.hub import Hub
         cam = Cam(self.cfg.get_camera("farm"), self.cfg)
@@ -609,6 +611,55 @@ class ClawBotEventMediaTests(EventFixture):
         response = mock.MagicMock()
         response.__enter__.return_value.headers = {"x-encrypted-param": "OFFLINE-RECEIPT"}
         return seen, post, response
+
+    def test_completed_annotated_event_query_upload_and_playback_share_exact_mp4(self):
+        import cv2
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from nvr.camera import Cam
+        from nvr.event_overlay import Detection, FramePacket
+        from nvr.server import create_app
+        from tests.test_api import FakeHub
+        from tests.test_event_overlay import colored_pixels, image_packet
+
+        camera = Cam(self.cfg.get_camera("farm"), self.cfg)
+        self.addCleanup(camera.stop)
+        packet = image_packet(detection=Detection(((70, 20, 80, 130),), "haar", (320, 180)))
+        camera.state, camera.last_jpeg, camera.seq, camera.last_ts = "online", packet.jpeg, 1, packet.timestamp
+        _, paired = camera.frame_sample()
+        paired = FramePacket(paired.jpeg, paired.seq, paired.timestamp, paired.source, packet.detection)
+        camera.start_record(paired)
+        part = Path(camera.rec_path)
+        self.wait_until(lambda: camera._jpeg_recorder.frames >= 5)
+        camera.stop_record()
+        completed = part.with_name(part.name.replace(".part.mp4", ".mp4"))
+        original = completed.read_bytes()
+        client = create_app(self.cfg, FakeHub()).test_client()
+        listing = client.get("/api/recordings?type=event").get_json()
+        self.assertEqual(listing["count"], 1)
+        playback = client.get("/api/rec/farm/%s/event/%s" % (self.today, completed.name))
+        self.assertEqual(playback.data, original)
+        playback.close()
+        seen, post, response = self.transport()
+        with mock.patch.object(self.bot, "_post", side_effect=post), \
+             mock.patch("urllib.request.urlopen", return_value=response) as upload:
+            self.request("今天事件")
+            upload.assert_not_called()
+            self.request("播放第一条")
+        upload.assert_called_once()
+        encrypted = upload.call_args.args[0].data
+        decryptor = Cipher(algorithms.AES(bytes.fromhex(seen["getuploadurl"]["aeskey"])), modes.ECB()).decryptor()
+        padded = decryptor.update(encrypted) + decryptor.finalize()
+        restored = padded[:-padded[-1]]
+        self.assertEqual(restored, original)
+        recovered = self.root / "annotated-round-trip.mp4"
+        recovered.write_bytes(restored)
+        video = cv2.VideoCapture(str(recovered))
+        try:
+            ok, frame = video.read()
+            self.assertTrue(ok)
+            self.assertTrue(colored_pixels(frame, "#F51616")[18:24, 80:140].any())
+        finally:
+            video.release()
 
     def test_real_event_message_upload_decrypts_to_original_mp4(self):
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes

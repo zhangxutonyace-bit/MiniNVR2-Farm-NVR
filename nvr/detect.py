@@ -37,23 +37,37 @@ def cascade():
     return _CLS or None
 
 
+def private_cascade():
+    """Encoding threads must own their native classifier, just like MOG2."""
+    path = _haar_path()
+    if not path:
+        return None
+    classifier = cv2.CascadeClassifier(path)
+    return classifier if not classifier.empty() else None
+
+
 class Detector(object):
     """per-camera 实例（MOG2 背景模型需要各路独立），但被串行调用。"""
 
-    def __init__(self, opts=None):
+    def __init__(self, opts=None, independent=False):
         o = opts or {}
         self.mode = (o.get("mode") or "auto").lower()
         self.min_area = float(o.get("min_area") or 0.02)
         self.mog = cv2.createBackgroundSubtractorMOG2(
             history=200, varThreshold=36, detectShadows=True)
-        self.cls = cascade() if self.mode in ("auto", "haar") else None
+        self.cls = ((private_cascade() if independent else cascade())
+                    if self.mode in ("auto", "haar") else None)
         self.boxes = []
+        self.confirmed_boxes = []
+        self.provenance = ""
         self._kern = None
         self._warmed = False
 
     def process(self, img):
         """img: BGR 小图（如 480x270）。返回 True/False（有人/没动静）。"""
         self.boxes = []
+        self.confirmed_boxes = []
+        self.provenance = ""
         if img is None or img.size == 0:
             return False
 
@@ -89,6 +103,8 @@ class Detector(object):
 
         if self.mode == "motion":
             self.boxes = boxes
+            self.confirmed_boxes = list(boxes)
+            self.provenance = "motion"
             return True
 
         # Haar 确认（只在候选框区域内跑，比全图快得多）
@@ -103,6 +119,11 @@ class Detector(object):
                     minSize=(max(10, int(min_h * 0.35)), min_h))
                 if len(found):
                     self.boxes = boxes
+                    # Haar returns coordinates inside this candidate ROI.
+                    # Legacy boxes/boolean and short-circuit order stay intact.
+                    self.confirmed_boxes = [(x + int(rx), y + int(ry), int(rw), int(rh))
+                                            for rx, ry, rw, rh in found]
+                    self.provenance = "haar"
                     return True
 
         if self.mode == "haar":
@@ -114,6 +135,8 @@ class Detector(object):
         for (x, y, cw, ch) in boxes:
             if ch >= cw * 1.15 and ch >= h * 0.35:
                 self.boxes = boxes
+                self.confirmed_boxes = [(x, y, cw, ch)]
+                self.provenance = "heuristic"
                 return True
 
         self.boxes = boxes
