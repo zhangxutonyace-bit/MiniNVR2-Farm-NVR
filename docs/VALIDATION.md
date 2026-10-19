@@ -97,6 +97,8 @@ v2.2.3 新增微信指定摄像头的单路预览链接，只面向同一 Wi-Fi�
 
 本机证据保存在忽略目录：`netbird-remote-activation.json`、`installed-netbird-public-smoke.json`、`live-remote-preview-v2.3.0.json`。当前只覆盖此次电脑、微信账号、手机、移动网络与合成画面；真实摄像头、其他运营商、长期运行及自动恢复未验收。v2.3.0 尚未公开发布，公开下载仍为 v2.2.3。
 
+后续“微信内直接点击”第一轮测试使用独立纯网址回复的 Windows 候选 EXE，SHA-256 为 `fb5c1b29457643d2fab39431b18bcfc7e5f08423720d104934ed4729744e6d5d`；用户确认网址仍不可点击。第二轮仅在临时源码诊断版尝试显式 Markdown 链接，164 项离线检查、源码进程模拟预览 10 项检查通过；手机渲染与点击结果仍待确认，不能将其记为正式 EXE 或真实微信点击成功。
+
 ## Windows Release 分发
 
 v2.2.3 沿用上述手机实测通过的最终EXE。下载包包含通用使用说明、微信事件录像说明和新增的 `微信局域网预览-操作步骤.txt`；两份微信专门指南采用UTF-8 BOM和Windows换行。发布前重新检查EXE字节、ZIP完整性及包内每个文件的校验值，包内不含账号、配置、日志或录像。启动、事件模拟和预览模拟记录均在检查前后核对同一EXE摘要与尺寸，发布清单中的手机验收也绑定同一摘要。校验值以 [v2.2.3 Release](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/tag/v2.2.3) 的 `SHA256SUMS.txt` 为准。

@@ -819,7 +819,7 @@ class ClawBot(threading.Thread):
             self.send_text(to, ctx, "暂时不能生成预览链接：%s" % exc)
             return True
         self.log("[clawbot] 已生成单路预览链接（10分钟有效）")
-        # Let the phone recognize the complete URL as one standalone text item.
-        # Do not wrap it in Markdown/HTML or alter its authorization fragment.
-        self.send_text(to, ctx, link)
+        # Explicit Markdown link for clients that do not auto-link plain URLs.
+        # Keep the generated authorization fragment intact; never use HTML.
+        self.send_text(to, ctx, "[打开实时预览](%s)" % link)
         return True

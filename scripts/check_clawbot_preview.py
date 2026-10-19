@@ -164,7 +164,9 @@ def _handler(state):
                     assert items and all(item.get("type") == 1 for item in items), \
                         "Preview reply must be text, without a video/CDN upload"
                     text = "\n".join(item["text_item"]["text"] for item in items)
-                    links = re.findall(r"http://[^\s<>]+", text)
+                    explicit_link = re.fullmatch(r"\[打开实时预览\]\((http://[^\s<>()]+)\)", text)
+                    assert explicit_link, "Preview reply must be one explicit Markdown link"
+                    links = [explicit_link.group(1)]
                     with state.lock:
                         state.messages.append(message)
                         state.links.extend(links)
@@ -330,8 +332,8 @@ def check(executable=None):
                     assert len(state.links) == 1, "Expected one camera preview link"
                     link = state.links[0]
                     assert len(state.messages) == 1 and state.messages[0]["item_list"] == [
-                        {"type": 1, "text_item": {"text": link}}], \
-                        "Preview reply must be one complete URL without extra text or markup"
+                        {"type": 1, "text_item": {"text": "[打开实时预览](%s)" % link}}], \
+                        "Preview reply must preserve the complete link target in one text item"
                     assert "getupdates" in state.calls and "sendmessage" in state.calls
                 _approved_url(link, {lan_address: {preview_port}}, fragment=True)
                 parsed = urllib.parse.urlsplit(link)

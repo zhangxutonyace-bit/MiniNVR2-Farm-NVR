@@ -55,7 +55,8 @@ class ClawBotPreviewTests(OfflineTestCase):
                 self.reset()
                 self.request(command)
                 self.hub.preview_link.assert_called_once_with(camera_id)
-                self.texts.assert_called_once_with(self.owner, self.context, self.link)
+                self.texts.assert_called_once_with(self.owner, self.context,
+                                                    "[打开实时预览](%s)" % self.link)
                 self.bot.send_video.assert_not_called()
                 self.bot._timelapse.assert_not_called()
 
@@ -111,13 +112,24 @@ class ClawBotPreviewTests(OfflineTestCase):
         self.assertNotIn(self.link, self.text())
         self.bot.send_video.assert_not_called()
 
-    def test_remote_reply_is_one_unmodified_https_url_without_markup_or_caption(self):
+    def test_remote_reply_has_one_explicit_link_with_unmodified_https_target(self):
         self.cfg.set("remote_preview", "enabled", True, save=False)
         link = "https://fixture.example/preview#t=fixture-only-ticket"
         self.hub.preview_link.return_value = link
         self.request("预览1号")
         self.hub.preview_link.assert_called_once_with("farm")
-        self.texts.assert_called_once_with(self.owner, self.context, link)
+        self.texts.assert_called_once_with(self.owner, self.context, "[打开实时预览](%s)" % link)
+
+    def test_explicit_link_preserves_url_safe_ticket_punctuation(self):
+        self.cfg.set("remote_preview", "enabled", True, save=False)
+        for ticket in ("_" + "a" * 41 + "_", "__" + "-" * 40 + "_", "a" * 42 + "-"):
+            with self.subTest(ticket=ticket):
+                self.reset()
+                link = "https://fixture.example/preview#t=" + ticket
+                self.hub.preview_link.return_value = link
+                self.request("预览1号")
+                self.texts.assert_called_once_with(self.owner, self.context,
+                                                    "[打开实时预览](%s)" % link)
 
     def test_remote_failure_explains_recovery_without_returning_a_lan_link(self):
         self.cfg.set("remote_preview", "enabled", True, save=False)
@@ -172,7 +184,8 @@ class ClawBotTextReceiptTests(OfflineTestCase):
                 self.assertEqual(post.call_args.args[0], "sendmessage")
                 sent = post.call_args.args[1]["msg"]
                 self.assertEqual(sent["context_token"], self.context)
-                self.assertEqual(sent["item_list"], [{"type": 1, "text_item": {"text": self.link}}])
+                self.assertEqual(sent["item_list"], [{"type": 1, "text_item": {
+                    "text": "[打开实时预览](%s)" % self.link}}])
                 self.assertIn("微信接口已接受文字回复（不代表手机已送达）", self.logs[-1])
                 self.assert_private_values_not_logged()
 
