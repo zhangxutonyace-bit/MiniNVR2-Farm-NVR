@@ -91,8 +91,16 @@ The NetBird process exposes a dynamically allocated bridge port bound only to it
 - Official NetBird v0.81.2 signed archive and installer hashes matched GitHub metadata. Publisher NetBird GmbH is valid; the actual signature inspector accepts the downloaded executable after the PS5 module-path fix. Help flags and tagged source interfaces were inspected; no account/session was activated.
 - Local installed MiniNVR2 is now v2.3.0. Old EXE/private config are backed up; camera specifications and WeChat identity were preserved, and existing WeChat reception resumed. Remote mode remains disabled/stopped and no firewall rule was changed.
 - Current installed check: configured LAN-preview address is no longer assigned to this PC; camera is offline. The backup contains that same stale preview address. Do not treat this as successful live-camera acceptance or silently change camera/network settings.
-- Real NetBird account connectivity, actual proxy Authorization forwarding, mobile-data/WeChat viewing and sustained operation remain NOT_TESTED. Provider installation/login/activation is the next human-controlled step. Public GitHub release remains v2.2.3.
+- At the checkpoint before account activation, real NetBird account connectivity, actual proxy Authorization forwarding, mobile-data/WeChat viewing and sustained operation were NOT_TESTED. Provider installation/login/activation was the next human-controlled step. See the later acceptance update below; public GitHub release remains v2.2.3.
 - Candidate EXE SHA256: e6e32c1a1115dfda774ba4dffa8dcd1eb39d1538d14da255a539552d9285b983; bytes: 135515483.
+
+## Real provider and phone acceptance update (2026-10-19)
+
+- User authorized official NetBird installation, personally completed login, and confirmed the desktop client connected. The account permits Peer Expose only for a dedicated group containing this PC.
+- User then explicitly authorized a temporary synthetic-image relay. The installed v2.3.0 EXE above created the real HTTPS origin. Ten unauthenticated public-path checks passed; HTML/JS matched the candidate byte-for-byte.
+- During the requested mobile-data test (phone Wi-Fi off), user sent `预览 外网测试画面` and confirmed that a fresh link opened a continuously updating picture in WeChat. No extra phone app was used. This is real provider/phone acceptance with synthetic footage, not real-camera or long-duration acceptance.
+- An earlier link displayed a generic invalid/expired heading. Its detailed status was not captured; the original cause remains unknown. Requesting a fresh link immediately succeeded without software or permission changes.
+- Evidence is bound to the installed candidate EXE in ignored `validation-local/live-remote-preview-v2.3.0.json`. Public release remains v2.2.3; no push or release was performed in this acceptance step.
 
 ## Suggested Review Order
 
