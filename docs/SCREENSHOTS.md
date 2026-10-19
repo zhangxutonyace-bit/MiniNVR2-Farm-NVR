@@ -32,4 +32,6 @@
 
 [![带红框标注的检测画面](screenshots/05-detection-example.png)](screenshots/05-detection-example.png)
 
-[返回项目首页](../README.md) · [下载 Windows 程序](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v2.2.3/MiniNVR2-v2.2.3-windows-x64.zip) · [微信预览步骤](LAN_PREVIEW.md)
+以上截图来自 v2.2.3，保留原始使用画面，不代表 v2.4.0 新增的电脑摄像头入口与人物框连续跟随界面。
+
+[返回项目首页](../README.md) · [下载 Windows v2.4.0](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v2.4.0/MiniNVR2-v2.4.0-windows-x64.zip) · [同一 Wi-Fi 预览](LAN_PREVIEW.md) · [外网预览步骤](REMOTE_PREVIEW.md)

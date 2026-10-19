@@ -67,6 +67,7 @@ Bundle OpenCV Zoo NanoDet (3,800,954 bytes), SHA-256 `4b82da9944b88577175ee23a45
 
 - 2026-10-19: User accepted playback but rejected jumping/non-following boxes; annotation-only localization/tracking proposed.
 - 2026-10-19: User approved the plan. Clarified execution ordering outside frozen intent: independent build/mock verification precedes review; local activation and fresh human following checks follow review. Human results remain separate and are never inferred from old acceptance or synthetic tests.
+- 2026-10-19: After confirming fresh-event following and computer/WeChat playback, the user explicitly authorized publishing this accepted version to GitHub with an updated Windows package and Release notes. This later human instruction supersedes the earlier local-only publication boundary; frozen implementation intent is retained as history. Distribution keeps the same accepted EXE and separate evidence scopes.
 
 ## Design Notes
 
@@ -116,7 +117,7 @@ Sources: [OpenCV Zoo NanoDet](https://github.com/opencv/opencv_zoo/tree/main/mod
   [build_exe.py:74](../../build/build_exe.py#L74)
 
 - 分发检查实际EXE内的模型与许可字节。
-  [package_windows_release.py:40](../../scripts/package_windows_release.py#L40)
+  [package_windows_release.py:43](../../scripts/package_windows_release.py#L43)
 
 **回归与交付证据**
 
@@ -127,7 +128,7 @@ Sources: [OpenCV Zoo NanoDet](https://github.com/opencv/opencv_zoo/tree/main/mod
   [test_target_tracking.py:122](../../tests/test_target_tracking.py#L122)
 
 - 模型和许可缺失或篡改必须拒绝分发。
-  [test_windows_release.py:183](../../tests/test_windows_release.py#L183)
+  [test_windows_release.py:300](../../tests/test_windows_release.py#L300)
 
-- 区分最终程序检查、已知测试准备错误和待真人跟随验收。
-  [VALIDATION.md:3](../VALIDATION.md#L3)
+- 区分程序检查、已知测试准备错误和真实跟随验收。
+  [VALIDATION.md:13](../VALIDATION.md#L13)

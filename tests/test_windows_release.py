@@ -21,6 +21,98 @@ class WindowsReleaseTests(unittest.TestCase):
                 "verified_command": "预览 外网测试画面",
                 **{key: True for key in release.REMOTE_PHONE_CHECKS}}
 
+    def event_receipt(self):
+        return {"artifact_type": "Windows executable", "version": "2.4.0",
+                "exe_sha256": self.digest, "exe_bytes": self.size,
+                "implementation_commit": "c" * 40,
+                "recorded_at_utc": "2026-10-19T12:05:35.346380+00:00",
+                "camera_source_type": "local-camera", "scope": release.EVENT_USER_SCOPE,
+                **{key: True for key in release.EVENT_USER_CHECKS}}
+
+    def test_local_event_acceptance_is_exact_and_public_scope_is_whitelisted(self):
+        record = self.event_receipt()
+        record.update(user_response="private chat text", private_account="private account",
+                      question_reference="private reference", extra={"secret": "private secret"})
+        public = release.validate_event_user(record, "2.4.0", self.digest, self.size)
+        self.assertEqual(public["status"], "PASS_USER_CONFIRMED")
+        self.assertEqual(public["verified_date"], "2026-10-19")
+        self.assertEqual(public["implementation_commit"], "c" * 40)
+        self.assertEqual(public["camera_source_type"], "local-camera")
+        self.assertIn("one fresh event", public["scope"])
+        self.assertIn("no RTSP", public["scope"])
+        for key in ("user_response", "private_account", "question_reference", "extra"):
+            self.assertNotIn(key, public)
+        for key in release.EVENT_USER_CHECKS:
+            self.assertIs(public[key], True)
+
+    def test_local_event_receipt_rejects_missing_false_and_nonboolean_claims(self):
+        for key in release.EVENT_USER_CHECKS:
+            for bad in (None, False, "true", 1):
+                with self.subTest(key=key, value=bad):
+                    receipt = self.event_receipt()
+                    if bad is None:
+                        receipt.pop(key)
+                    else:
+                        receipt[key] = bad
+                    with self.assertRaises(ValueError):
+                        release.validate_event_user(receipt, "2.4.0", self.digest, self.size)
+
+    def test_local_event_receipt_rejects_wrong_identity_and_scope(self):
+        for key, bad in (("artifact_type", "source diagnostic"), ("version", "2.3.0"),
+                         ("exe_sha256", "b" * 64), ("exe_bytes", self.size + 1),
+                         ("exe_bytes", str(self.size)), ("exe_bytes", True),
+                         ("implementation_commit", "C" * 40), ("implementation_commit", "c" * 39),
+                         ("implementation_commit", ["c" * 40]),
+                         ("camera_source_type", "rtsp"), ("camera_source_type", None),
+                         ("scope", "all cameras and all WeChat accounts"), ("scope", None)):
+            with self.subTest(key=key, value=bad):
+                receipt = self.event_receipt()
+                receipt[key] = bad
+                with self.assertRaises(ValueError):
+                    release.validate_event_user(receipt, "2.4.0", self.digest, self.size)
+        for key in self.event_receipt():
+            with self.subTest(missing=key):
+                receipt = self.event_receipt()
+                receipt.pop(key)
+                with self.assertRaises(ValueError):
+                    release.validate_event_user(receipt, "2.4.0", self.digest, self.size)
+
+    def test_local_event_receipt_requires_valid_utc_timestamp(self):
+        for bad in (None, 20261019, "2026-10-19", "2026-10-19T12:05:35",
+                    "2026-02-30T12:05:35+00:00", "2026-10-19T25:05:35Z",
+                    "2026-10-19T12:05:35+08:00", "2026-10-19T12:05:35Z\n"):
+            with self.subTest(timestamp=bad):
+                receipt = self.event_receipt()
+                receipt["recorded_at_utc"] = bad
+                with self.assertRaises(ValueError):
+                    release.validate_event_user(receipt, "2.4.0", self.digest, self.size)
+        receipt = self.event_receipt()
+        receipt["recorded_at_utc"] = "2026-10-19T12:05:35Z"
+        self.assertEqual(release.validate_event_user(receipt, "2.4.0", self.digest, self.size)["verified_date"],
+                         "2026-10-19")
+
+    def test_release_cli_keeps_legacy_phone_gate_and_requires_current_event_acceptance(self):
+        for version, args, message in (
+                ("2.3.0", ["--preview-record", "preview.json"], "--phone-record"),
+                ("2.4.0", ["--preview-record", "preview.json"], "--event-user-record"),
+                ("2.4.0", ["--event-user-record", "event.json"], "--preview-record")):
+            with self.subTest(version=version, args=args), \
+                    mock.patch.object(release.sys, "argv", ["package_windows_release.py", "--version", version, *args]), \
+                    mock.patch.object(release.sys, "version_info", (3, 12, 10)):
+                with self.assertRaisesRegex(ValueError, message):
+                    release.main()
+
+    def test_new_release_optional_phone_receipt_still_requires_exact_remote_acceptance(self):
+        record = {**self.remote_receipt(), "version": "2.4.0"}
+        self.assertEqual(release.validate_phone(record, "2.4.0", self.digest, self.size)["status"],
+                         "PASS_USER_CONFIRMED")
+        for key, bad in (("version", "2.3.0"), ("exe_sha256", "b" * 64),
+                         ("exe_bytes", self.size + 1), ("phone_direct_click_verified", False)):
+            with self.subTest(key=key, value=bad):
+                receipt = {**record, key: bad}
+                with self.assertRaises(ValueError):
+                    release.validate_phone(receipt, "2.4.0", self.digest, self.size)
+
     def test_final_remote_receipt_has_precise_public_scope(self):
         receipt = self.remote_receipt()
         receipt.update(private_account="not public", capability="not public")
@@ -104,7 +196,7 @@ class WindowsReleaseTests(unittest.TestCase):
                 release.read_record(path)
 
     def test_remote_and_legacy_packages_keep_correct_guides_and_evidence(self):
-        for version in ("2.2.3", "2.3.0"):
+        for version in ("2.2.3", "2.3.0", "2.4.0"):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
                 repo = Path(directory) / "synthetic-repo"
                 (repo / "dist").mkdir(parents=True)
@@ -117,7 +209,8 @@ class WindowsReleaseTests(unittest.TestCase):
                 (repo / "dist" / "MiniNVR2.exe").write_bytes(executable)
                 digest = hashlib.sha256(executable).hexdigest()
                 for name in ("WINDOWS_DOWNLOAD.md", "WECHAT_QUICK_START.txt",
-                             "LAN_PREVIEW_QUICK_START.txt", "REMOTE_PREVIEW.md"):
+                             "LAN_PREVIEW_QUICK_START.txt", "REMOTE_PREVIEW.md",
+                             "LOCAL_CAMERA_QUICK_START.md"):
                     (repo / "docs" / name).write_text("合成操作说明\n第二行\n", encoding="utf-8")
                 identity = {"version": version, "exe_sha256": digest, "exe_bytes": len(executable)}
                 records = {"build": {**identity, "mobile_and_status_assets_match_source": True,
@@ -125,13 +218,17 @@ class WindowsReleaseTests(unittest.TestCase):
                            "startup": {**identity, **{key: "PASS" for key in release.STARTUP_CHECKS}},
                            "event": {**identity, **{key: "PASS" for key in release.EVENT_CHECKS}},
                            "preview": {**identity, **{key: "PASS" for key in release.PREVIEW_CHECKS}}}
-                if version == "2.3.0":
+                if version >= "2.3.0":
                     records["startup"]["remote_preview_default_off"] = "PASS"
                     phone = {**self.remote_receipt(), **identity}
                 else:
                     phone = {**identity, "phone_on_final_exe_verified": True,
                              "verified_date": "2026-10-19", "verified_command": "预览1号"}
-                records["phone"] = phone
+                if version == "2.4.0":
+                    records["event-user"] = {**self.event_receipt(), **identity,
+                                             "user_response": "private chat text"}
+                else:
+                    records["phone"] = phone
                 argv = ["package_windows_release.py", "--version", version,
                         "--output-dir", str(repo / "output")]
                 for label, record in records.items():
@@ -167,12 +264,32 @@ class WindowsReleaseTests(unittest.TestCase):
                         content = archive.read(stem + "/" + guide)
                         self.assertTrue(content.startswith(b"\xef\xbb\xbf"))
                         self.assertNotIn(b"\n", content.replace(b"\r\n", b""))
-                    if version == "2.3.0":
+                    if version >= "2.3.0":
                         self.assertIn("微信远程预览-操作步骤.txt", manifest["user_guides"])
-                        self.assertEqual(len(manifest["user_guides"]), 4)
                         self.assertNotIn("real_phone_lan_preview", verification)
-                        self.assertTrue(verification["real_phone_remote_preview"]["synthetic_only"])
                         self.assertEqual(verification["existing_local_exe_startup"]["remote_preview_default_off"], "PASS")
+                        if version == "2.4.0":
+                            self.assertEqual(len(manifest["user_guides"]), 5)
+                            self.assertIn("电脑内置USB摄像头-操作步骤.txt", manifest["user_guides"])
+                            self.assertEqual(verification["real_phone_remote_preview"]["status"], "NOT_RETESTED")
+                            self.assertNotIn("PASS", json.dumps(verification["real_phone_remote_preview"]))
+                            for key in ("real_camera", "real_wechat_event_delivery", "real_person_following"):
+                                self.assertEqual(verification[key]["status"], "PASS_USER_CONFIRMED")
+                                self.assertEqual(verification[key]["exe_sha256"], digest)
+                                self.assertEqual(verification[key]["exe_bytes"], len(executable))
+                            self.assertEqual(verification["real_camera"]["source_type"], "local-camera")
+                            self.assertIn("RTSP not verified", verification["real_camera"]["scope"])
+                            delivery = verification["real_wechat_event_delivery"]
+                            self.assertEqual(set(delivery), {"status", "verified_date", "implementation_commit",
+                                                             "exe_sha256", "exe_bytes", "scope"})
+                            self.assertIn("One current WeChat account", delivery["scope"])
+                            self.assertNotIn("phone", delivery["scope"].lower())
+                            self.assertNotIn("private chat text", json.dumps(manifest))
+                        else:
+                            self.assertEqual(len(manifest["user_guides"]), 4)
+                            self.assertTrue(verification["real_phone_remote_preview"]["synthetic_only"])
+                            self.assertEqual(verification["real_camera"], "NOT_VERIFIED")
+                            self.assertEqual(verification["real_wechat_event_delivery"]["status"], "NOT_VERIFIED")
                     else:
                         self.assertNotIn("微信远程预览-操作步骤.txt", manifest["user_guides"])
                         self.assertEqual(len(manifest["user_guides"]), 3)
