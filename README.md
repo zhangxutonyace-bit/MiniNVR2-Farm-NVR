@@ -36,9 +36,26 @@ MiniNVR2 希望用更轻量的方式解决这些问题：**复用现有摄像头
 
 项目采用 Python、Flask、OpenCV 和 FFmpeg。预览、检测与抽帧复用同一路画面；事件发生时另开录像流，并在编码兼容时优先直接封装，减少重复编码。实际资源占用取决于摄像头数量、分辨率和编码方式。
 
+## 实际使用界面
+
+以下5张为用户提供的实际使用截图，原图完整保留，点击图片即可查看大图。[查看完整截图与说明](docs/SCREENSHOTS.md)。
+
+| 实时预览 | 摄像头管理 |
+| :--: | :--: |
+| [<img src="docs/screenshots/01-live-preview.png" alt="实时预览：摄像头当前画面与在线帧率" width="380">](docs/screenshots/01-live-preview.png) | [<img src="docs/screenshots/02-camera-management.png" alt="摄像头管理：网段扫描、RTSP添加及在线状态" width="380">](docs/screenshots/02-camera-management.png) |
+| **录像回放界面** | **设置界面** |
+| [<img src="docs/screenshots/03-recordings.png" alt="回放界面：摄像头和录像类型筛选，此时暂无已完成录像" width="380">](docs/screenshots/03-recordings.png) | [<img src="docs/screenshots/04-settings.png" alt="部分设置区域：取流、检测、录像、邮件和微信ClawBot" width="380">](docs/screenshots/04-settings.png) |
+| **检测画面示例** | **截图说明** |
+| [<img src="docs/screenshots/05-detection-example.png" alt="带红框标注的检测画面示例" width="380">](docs/screenshots/05-detection-example.png) | 回放图展示筛选和播放器布局，截图时暂无已完成录像。检测红框用于展示画面，检测效果需按现场环境验证。[查看逐图说明](docs/SCREENSHOTS.md)。 |
+
+<details>
+<summary>查看本机合成视频回放演示</summary>
+
 ![本机合成视频回放演示](docs/demo-playback.jpg)
 
-> 截图和演示素材均由本机生成，不是真实农场监控。当前版本为 2.2.3；验证范围见 [验收记录](docs/VALIDATION.md)。
+上图使用本机生成的合成素材。当前版本为2.2.3；验证范围见 [验收记录](docs/VALIDATION.md)。
+
+</details>
 
 ## 主要功能
 
