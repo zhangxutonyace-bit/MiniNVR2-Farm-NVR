@@ -316,6 +316,40 @@ class WindowsReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.validate_bundled_person_assets(Path("synthetic.exe"))
 
+    def test_v3_catalog_notices_and_adapter_modules_are_verified_without_launch(self):
+        from nvr.algorithm_catalog import verify_catalog_asset
+        from nvr.event_labels import FONT_NAME
+        verify_catalog_asset()
+        paths = ("third_party/AlgorithmCatalog/catalog.json", "third_party/YOLOX/LICENSE",
+                 "third_party/YOLOX/SOURCE.json", "fonts/" + FONT_NAME,
+                 "third_party/LabelFont/OFL.txt", "third_party/LabelFont/NOTICE.txt",
+                 "third_party/LabelFont/SOURCE.json")
+        assets = {name: (release.REPO / name).read_bytes() for name in paths}
+        archive = mock.Mock()
+        archive.toc = dict.fromkeys(assets)
+        archive.extract.side_effect = lambda name: assets[name]
+        modules = ("nvr.algorithm_catalog", "nvr.algorithm_types", "nvr.object_models",
+                   "nvr.model_store", "nvr.algorithm_runtime", "nvr.event_labels")
+        archive.open_embedded_archive.return_value.toc = dict.fromkeys(modules)
+        with mock.patch("PyInstaller.archive.readers.CArchiveReader", return_value=archive):
+            result = release.validate_bundled_algorithm_assets(Path("synthetic.exe"))
+            self.assertEqual(len(result["catalog"]["models"]), 3)
+            self.assertEqual(len(result["catalog"]["models"][0]["class_map"]), 80)
+            archive.open_embedded_archive.return_value.toc.pop("nvr.object_models")
+            with self.assertRaises(ValueError):
+                release.validate_bundled_algorithm_assets(Path("synthetic.exe"))
+            archive.open_embedded_archive.return_value.toc = dict.fromkeys(modules)
+            assets[paths[0]] += b"drift"
+            with self.assertRaises(ValueError):
+                release.validate_bundled_algorithm_assets(Path("synthetic.exe"))
+
+    def test_v3_package_includes_readable_algorithm_guide(self):
+        with tempfile.TemporaryDirectory() as directory:
+            names = release.copy_user_guides(Path(directory), "3.0.0")
+            self.assertEqual(len(names), 6)
+            text = (Path(directory) / "算法商城-操作步骤.txt").read_text(encoding="utf-8-sig")
+            self.assertIn("结束当前事件并保留片段", text)
+
 
 if __name__ == "__main__":
     unittest.main()

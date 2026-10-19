@@ -1,6 +1,29 @@
 # 第三方组件源码与构建信息
 
-本文件对应 MiniNVR2 2.4.0 Windows x64 发布包。原有 Python、OpenCV、FFmpeg 等依赖版本沿用2.3.0，本版新增下述 NanoDet 离线人物定位模型及其 Apache-2.0 许可；模型不改变原有事件触发算法。原有来源资料核对日期为2026-10-18，依赖文件与新增模型于2026-10-19复核。NetBird 客户端未内置分发，由用户另从其官网下载。
+## V3.0 候选版：算法商城
+
+V3 尚未发布。继续使用现有 OpenCV DNN CPU，不新增 Ultralytics、PyTorch、ONNX Runtime 或 GPU 依赖，不下载或执行远程 Python/PT 代码。商城启用后，NanoDet 的同一 COCO 图用于选中类别的事件判断和录像标注；旧版模式继续保留独立人物画框行为。
+
+| 模型 | 精确大小 | SHA-256 | 固定官方来源 / 输入配置 |
+| --- | --- | --- | --- |
+| 内置 NanoDet | 3,800,954 字节 | `4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186` | 下方固定 OpenCV Zoo 来源；RGB 416 归一化、居中补边 |
+| YOLOX Nano | 3,659,407 字节 | `c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d` | [官方 0.1.1rc0 模型](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx)；BGR 416、原始浮点值 0–255、左上补边 114 |
+| YOLOX-S | 35,858,002 字节 | `c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063` | [固定 OpenCV Zoo 模型](https://media.githubusercontent.com/media/opencv/opencv_zoo/47534e27c9851bb1128ccc0102f1145e27f23f98/models/object_detection_yolox/object_detection_yolox_2022nov.onnx)；RGB 640、原始浮点值 0–255、左上补边 114 |
+
+YOLOX 两图均为未解码的 80 类输出，按官方 grid/stride、指数宽高、objectness × class confidence 解码。本应用先取全部 80 类最高类别，再按用户勾选过滤，并按类别独立 NMS，保留重叠的人/手机等不同目标，总框数有界。该 NMS 与 Nano 原始演示的默认跨类 NMS 不同。
+
+YOLOX 使用 [Apache-2.0 许可证](https://github.com/Megvii-BaseDetection/YOLOX/blob/6ddff4824372906469a7fae2dc3206c7aa4bbaee/LICENSE)。许可及模型/适配来源保留在 `third_party/YOLOX/`，固定目录及类别映射在 `third_party/AlgorithmCatalog/catalog.json`。源码仓库和 EXE 不内置下载后的 YOLOX 权重；仅在用户点击下载时从固定官方来源获取，按大小、摘要和本机兼容性校验后安装到持久数据目录。下方 v2.4.0 条目为历史版本说明。
+
+## V3.0 中文事件标签字体
+
+商城类别标签使用随程序附带的 **MiniNVR Label Sans SC** 小字集，派生自 [Noto Sans CJK SC Regular 2.004](https://github.com/notofonts/noto-cjk/tree/523d033d6cb47f4a80c58a35753646f5c3608a78)，采用 **SIL Open Font License 1.1**。保留原始版权 `© 2014-2021 Adobe`，主字体名与 PostScript 名已改为 MiniNVR Label Sans SC / MiniNVRLabelSansSC-Regular。上游作者不为派生版背书。
+
+- 固定上游提交：`523d033d6cb47f4a80c58a35753646f5c3608a78`（tag `Sans2.004`）；[原字体文件](https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf) SHA-256 为 `2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b`。
+- 派生文件：`fonts/mininvr-labels-sc-regular.otf`，14,440 字节，SHA-256 为 `6586b77fc663de9718099b498cdcbc7aa301d33f3551445243535fc14e61ea00`。
+- 只保留13个类别标签所需汉字、可打印 ASCII 及“识别目标”，共123码点/124字形；移除无关字形、提示及未用布局表，未重画字形。FontTools 4.67.0 只用于字体准备，不加入运行时；程序使用已有 Pillow/FreeType，离线文件加载，不依赖系统字体。
+- `third_party/LabelFont/OFL.txt`、`NOTICE.txt` 保留许可证和修改声明原文，`SOURCE.json` 保存公开来源、摘要、改名及字符范围，不含本机路径。这些材料与字体一起打入 EXE，下载包另含相应第三方许可。
+
+以下为 MiniNVR2 2.4.0 Windows x64 发布包的历史组件记录。原有 Python、OpenCV、FFmpeg 等依赖版本沿用2.3.0，本版新增下述 NanoDet 离线人物定位模型及其 Apache-2.0 许可；模型不改变原有事件触发算法。原有来源资料核对日期为2026-10-18，依赖文件与新增模型于2026-10-19复核。NetBird 客户端未内置分发，由用户另从其官网下载。
 程序 ZIP 内的 `THIRD_PARTY_NOTICES/` 保存随包许可证；本页提供源代码和构建来源。
 
 ## v2.4.0 新增：离线人物画框模型

@@ -6,6 +6,6 @@
   "model_sha256": "4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186",
   "model_bytes": 3800954,
   "license_url": "https://raw.githubusercontent.com/opencv/opencv_zoo/25f423d0e04c31a17254620e58febd7386da523b/models/object_detection_nanodet/LICENSE",
-  "annotation_scope": "Offline CPU, person class only, independent of event decisions",
+  "annotation_scope": "Legacy auto/Haar: independent offline person annotation. V3 market mode: selected COCO classes drive semantic event decisions and event annotations.",
   "runtime_downloads": false
 }

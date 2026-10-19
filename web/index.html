@@ -100,6 +100,7 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
     <button data-tab="wall" class="on">预览</button>
     <button data-tab="cams">摄像头</button>
     <button data-tab="rec">回放</button>
+    <button data-tab="alg">算法商城</button>
     <button data-tab="set">设置</button>
   </nav>
   <div class="meta"><span id="mMem"></span> · <span id="mVer"></span></div>
@@ -159,7 +160,7 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
     <div class="card">
       <h3>摄像头</h3>
       <table>
-        <thead><tr><th>名称</th><th>地址</th><th>状态</th><th>识别人</th><th>操作</th></tr></thead>
+        <thead><tr><th>名称</th><th>地址</th><th>状态</th><th>参与检测</th><th>操作</th></tr></thead>
         <tbody id="camList"></tbody>
       </table>
       <div class="row" style="margin-top:12px">
@@ -198,6 +199,32 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
     </div>
   </section>
 
+  <section id="tab-alg" hidden>
+    <div class="card">
+      <h3>算法商城</h3>
+      <p>选择一个模型，再勾选需要触发事件录像的目标。模型在电脑本地运行，不上传摄像头画面。</p>
+      <div id="algActive" class="hint" role="status">正在读取当前算法…</div>
+      <div id="algModels"></div>
+      <div id="algDownload" class="hint" role="status" aria-live="polite"></div>
+      <progress id="algProgress" value="0" max="1" style="width:100%" hidden aria-label="算法下载进度"></progress>
+      <button class="line" id="algCancel" hidden>取消下载</button>
+    </div>
+    <div class="card">
+      <h3>勾选识别目标</h3>
+      <div class="hint">以下为待应用的选择；修改后需点击“应用”，当前生效目标以页面上方说明为准。</div>
+      <div id="algTargets" class="row" style="gap:16px"></div>
+      <div class="hint">色样对应新事件录像中的类别框和中文标签；按 FigJam 的红、橙、深蓝、黄绿四色稳定复用，不代表危险等级、身份或跟踪编号。宠物分别使用猫、狗的颜色，只标注实际识别类别。</div>
+      <div class="hint">“座椅（椅子/凳子）”使用 chair 类别，凳子不是单独的模型类别，可能漏检；桌子使用 dining table（餐桌）类别。“宠物”仅代表猫和狗，与单独勾选猫/狗会自动合并。</div>
+      <div class="hint">选中目标出现即可按连续命中次数触发录像；静止的椅子、桌子等也可能使录像持续到单次事件上限。取消该目标或调整镜头可避免持续录像。效果受遮挡、距离和光线影响，请先在实际场景验证。</div>
+      <div class="row" style="margin-top:14px">
+        <div><label for="algConfidence">置信度（越高越严格）</label><input class="inp" id="algConfidence" type="number" min="0.1" max="0.95" step="0.05" value="0.35" style="width:140px"></div>
+        <div><button id="algApply">应用模型和选中目标</button></div>
+      </div>
+      <div class="hint">下载不会自动启用。应用后切换到“商城多目标检测”，先结束当前事件并保留录像，再使用新设置；预览与抽帧画面保持原样，目标框只写入新事件录像。事件录像显示目标框开关仍在“设置”。</div>
+      <div id="algResult" class="hint" role="status" aria-live="polite"></div>
+    </div>
+  </section>
+
   <!-- ============ 设置 ============ -->
   <section id="tab-set" hidden>
     <div class="card">
@@ -218,30 +245,31 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
     </div>
 
     <div class="card">
-      <h3>人形检测</h3>
+      <h3>事件检测</h3>
       <div class="row">
         <div><label class="switch"><input type="checkbox" id="dtEn"><span>启用检测</span></label></div>
         <div><label>模式</label><select id="dtMode">
           <option value="auto">自动（Haar 优先）</option>
           <option value="haar">仅 Haar</option>
-          <option value="motion">仅移动侦测（最省）</option></select></div>
+          <option value="motion">仅移动侦测（最省）</option>
+          <option value="market">商城多目标检测（到商城应用）</option></select></div>
         <div><label>检测间隔(秒)</label><input class="inp" id="dtInt" type="number" step="0.1" min="0.1" style="width:90px"></div>
         <div><label>连续命中次数</label><input class="inp" id="dtConfirm" type="number" min="1" style="width:90px"></div>
-        <div><label>人离开(秒)停录</label><input class="inp" id="dtGone" type="number" min="1" style="width:90px"></div>
+        <div><label>目标离开(秒)停录</label><input class="inp" id="dtGone" type="number" min="1" style="width:90px"></div>
       </div>
       <div class="hint">各路检测依次执行；增加摄像头仍会增加取流与整体资源消耗。
-        事件检测触发录像；抽帧按设定间隔单独保存。Haar 或移动侦测需要按实际现场验证效果。</div>
+        事件检测触发录像；抽帧按设定间隔单独保存。旧模式保持原行为，多目标需到算法商城应用。切换模式会结束当前事件并保留录像。</div>
     </div>
 
     <div class="card">
       <h3>录像</h3>
       <div class="row">
         <div><label class="switch"><input type="checkbox" id="rdBoxes"><span>事件录像显示目标框</span></label></div>
-        <div><label>目标框颜色</label><select class="inp" id="rdBoxColor">
+        <div><label>旧模式目标框颜色</label><select class="inp" id="rdBoxColor">
           <option value="#F51616">红色</option><option value="#E86D08">橙色</option>
           <option value="#0931C0">深蓝色</option></select></div>
       </div>
-      <div class="hint">默认打开，下次事件开始生效。打开后按预览分辨率（通常宽 480 像素）重新编码，RTSP 录像清晰度可能降低，CPU 占用增加；关闭后沿用原录像方式。仅描边、不填充，颜色只用于适应背景。移动侦测框表示移动区域，不能视为已确认的人；静止目标可能无框。处理失败时保留原画面，并在摄像头状态提示。</div>
+      <div class="hint">默认打开，下次事件开始生效。商城模式按类别固定颜色，附紧凑中文标签，只有标签背景填色；旧模式沿用上方全局三色。打开后按预览分辨率（通常宽 480 像素）重新编码，RTSP 录像清晰度可能降低，CPU 占用增加；关闭后沿用原录像方式。目标区域仅描边、不填充，颜色不表示危险等级。移动侦测框表示移动区域，不能视为已确认的人；静止目标可能无框。处理失败时保留原画面，并在摄像头状态提示。</div>
       <div class="row">
         <div><label>抽帧间隔(秒)</label><input class="inp" id="rdTl" type="number" min="10" style="width:110px"></div>
         <div><label>保留天数</label><input class="inp" id="rdKeep" type="number" min="1" style="width:90px"></div>
@@ -318,7 +346,7 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
       <div class="hint">
         微信功能为可选集成，默认关闭，需要自行扫码授权并验证真实收发。
         仅登录所有者和明确授权的用户可以请求录像。
-        抽帧可用「昨天 农场」；事件可用「今天事件」「昨天事件 农场」「最新事件」。
+        抽帧可用「昨天 农场」；事件可用「今天事件」或「今日事件」「昨天事件 农场」「最新事件」。
         列表中每页10条，回复「播放第2条」「下一页」「上一页」查看，列表15分钟内有效。
         每日自动发送可使用邮件推送；实际登录有效期和可用性以服务返回为准。
       </div>

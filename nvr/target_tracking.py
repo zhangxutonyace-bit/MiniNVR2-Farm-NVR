@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from .person_localizer import clipped_box
+from .algorithm_types import ObjectDetection, object_box
 
 
 def _iou(a, b):
@@ -45,6 +46,8 @@ class _Track:
     box: tuple
     confirmed_at: float
     points: object
+    class_id: int = 0
+    confidence: float = .35
 
 
 class TargetTracker:
@@ -52,7 +55,9 @@ class TargetTracker:
     MAX_TRACKS = 12
     MAX_FEATURES = 64
 
-    def __init__(self):
+    def __init__(self, threshold=.35, object_boxes=False):
+        self.threshold = float(threshold)
+        self.clip = object_box if object_boxes else clipped_box
         self.reset()
 
     def reset(self):
@@ -63,6 +68,7 @@ class TargetTracker:
         self.source = None
         self.frame_size = None
         self.last_boxes = ()
+        self.last_detections = ()
 
     @staticmethod
     def _gray(image):
@@ -143,13 +149,19 @@ class TargetTracker:
                  (seq is not None and self.seq is not None and seq <= self.seq))):
             self.reset()
         height, width = image.shape[:2]
-        proposals = []
+        proposals, classes, scores = [], [], []
         for detection in detections:
-            if not math.isfinite(float(detection.confidence)) or detection.confidence < .35:
+            if not math.isfinite(float(detection.confidence)) or detection.confidence < self.threshold:
                 continue
-            box = clipped_box(detection.box, width, height)
-            if box and not any(_iou(box, other) > .65 for other in proposals):
+            box = self.clip(detection.box, width, height)
+            cid = getattr(detection, "class_id", 0)
+            if type(cid) is not int or not 0 <= cid < 80:
+                continue
+            if box and not any(cid == other_cid and _iou(box, other) > .65
+                               for other, other_cid in zip(proposals, classes)):
                 proposals.append(box)
+                classes.append(cid)
+                scores.append(float(detection.confidence))
             if len(proposals) >= self.MAX_TRACKS:
                 break
         candidates = []
@@ -159,14 +171,15 @@ class TargetTracker:
                     continue
                 predicted = self._flow(track, gray, scale)
                 if predicted is not None:
-                    predicted = clipped_box(predicted, width, height)
+                    predicted = self.clip(predicted, width, height)
                     if predicted:
                         candidates.append((track, predicted))
         # Greedy globally sorted associations are one-to-one. Prefer IoU;
         # strict near-concentric containment also joins partial/full geometry.
         pairs = sorted(((-_iou(predicted, box), ti, di)
-                        for ti, (_, predicted) in enumerate(candidates)
-                        for di, box in enumerate(proposals) if _same_geometry(predicted, box)))
+                        for ti, (track, predicted) in enumerate(candidates)
+                        for di, box in enumerate(proposals)
+                        if track.class_id == classes[di] and _same_geometry(predicted, box)))
         matched_tracks, matched_detections, next_tracks = set(), set(), []
         for _, ti, di in pairs:
             if ti in matched_tracks or di in matched_detections:
@@ -185,21 +198,23 @@ class TargetTracker:
                 center = pc + .25 * residual
                 size = np.asarray(predicted[2:]) + .25 * (np.asarray(proposal[2:]) - predicted[2:])
                 box = tuple(center - size / 2) + tuple(size)
-            next_tracks.append(_Track(box, timestamp, None))
+            next_tracks.append(_Track(box, timestamp, None, classes[di], scores[di]))
             matched_tracks.add(ti)
             matched_detections.add(di)
         # Current semantic confirmations own the capacity. Only remaining
         # slots may carry image-supported tracks through a brief missed result.
         for di, proposal in enumerate(proposals):
             if di not in matched_detections:
-                next_tracks.append(_Track(proposal, timestamp, None))
+                next_tracks.append(_Track(proposal, timestamp, None, classes[di], scores[di]))
         for ti, (track, predicted) in enumerate(candidates):
-            if ti not in matched_tracks and not any(_same_geometry(predicted, box) for box in proposals):
-                next_tracks.append(_Track(predicted, track.confirmed_at, None))
+            if ti not in matched_tracks and not any(track.class_id == cid and _same_geometry(predicted, box)
+                                                   for box, cid in zip(proposals, classes)):
+                next_tracks.append(_Track(predicted, track.confirmed_at, None, track.class_id, track.confidence))
         self.tracks = next_tracks[:self.MAX_TRACKS]
         for track in self.tracks:
             track.points = self._features(gray, track.box, scale)
         self.previous, self.timestamp, self.seq, self.source = gray, timestamp, seq, source
         self.frame_size = image.shape[:2]
         self.last_boxes = tuple(track.box for track in self.tracks)
+        self.last_detections = tuple(ObjectDetection(t.box, t.confidence, t.class_id) for t in self.tracks)
         return self.last_boxes

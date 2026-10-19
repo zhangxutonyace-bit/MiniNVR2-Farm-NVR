@@ -170,6 +170,10 @@ class Cam(threading.Thread):
         self._tl_thread = None
         self._watch = None
         self._det_opts = None
+        self.model_store = None
+        self._algorithm_runner = None
+        self._algorithm_state_lock = threading.Lock()
+        self.algorithm_warning = ""
 
     # ---------------- 生命周期 ----------------
 
@@ -186,6 +190,7 @@ class Cam(threading.Thread):
 
     def stop(self):
         self._stop_event.set()
+        self.reset_algorithm()
         self._close_proc()
         self.stop_record()
         for thread in (self, self._tl_thread, self._watch):
@@ -395,6 +400,7 @@ class Cam(threading.Thread):
             with self.cfg.lock:
                 options = validate_target_options(dict(self.cfg.get("record")))
                 detect_options = dict(self.cfg.get("detect"))
+                algorithm_options = dict(self.cfg.get("algorithms"))
                 fps = self.cfg.get("stream", "fps", default=8)
             shared = self.is_local or options["target_boxes"]
             if shared and (self.state != "online" or not self.snapshot()[0]):
@@ -424,7 +430,9 @@ class Cam(threading.Thread):
             if shared:
                 overlay = (EventOverlay(options["target_box_color"], detect_options,
                                         warning=lambda message: self._annotation_failed(message, event_token),
-                                        log=self.log)
+                                        log=self.log,
+                                        runtime=lambda packet: self.market_infer(packet, algorithm_options),
+                                        algorithm_options=algorithm_options)
                            if options["target_boxes"] else None)
                 self._jpeg_recorder = SharedJpegRecorder(
                     p, self.record_sample if overlay else self.snapshot, fps=fps,
@@ -434,7 +442,8 @@ class Cam(threading.Thread):
                     annotation_failure=overlay.failed if overlay else None)
                 self.rec_proc = self._jpeg_recorder.proc
                 self.rec_t0 = time.time()
-                self.log("[事件] %s 检测到人 → 开始录像" % self.name)
+                self.log("[事件] %s 检测到%s → 开始录像" %
+                         (self.name, "选中目标" if detect_options.get("mode") == "market" else "人"))
                 return
             cmd = cmd_record(self.record_url, p,
                              transport=self.cfg.get("stream", "transport",
@@ -450,7 +459,8 @@ class Cam(threading.Thread):
                                   stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL)
             self.rec_t0 = time.time()
-            self.log("[事件] %s 检测到人 → 开始录像" % self.name)
+            self.log("[事件] %s 检测到%s → 开始录像" %
+                     (self.name, "选中目标" if detect_options.get("mode") == "market" else "人"))
         except Exception as e:
             self.rec_proc = None
             self.rec_path = ""
@@ -487,7 +497,8 @@ class Cam(threading.Thread):
         if self.rec_path:
             try:
                 # 太小的多半是空壳，丢掉免得占目录
-                valid = (local_ok and validate_video(self.rec_path)
+                valid = (local_ok and validate_video(self.rec_path, diagnostic=lambda reason:
+                            self.log("[事件校验] %s %s" % (self.name, reason)))
                          if shared else os.path.getsize(self.rec_path) >= 20 * 1024)
                 if not valid:
                     retained = (shared and local_ok and os.path.isfile(self.rec_path)
@@ -580,6 +591,39 @@ class Cam(threading.Thread):
             self._det_opts = relevant
         return self.det
 
+    def market_infer(self, packet, options=None):
+        from .algorithm_runtime import AlgorithmRunner
+        from .algorithm_catalog import validate_persisted_options
+        from .model_store import ModelStore
+        try:
+            options = validate_persisted_options(dict(self.cfg.get("algorithms")) if options is None else options)
+        except ValueError:
+            self._algorithm_failed("已保存的商城算法设置不可用，请到算法商城重新选择并应用；当前不触发商城事件。")
+            return None
+        with self._algorithm_state_lock:
+            if self._algorithm_runner is None:
+                self._algorithm_runner = AlgorithmRunner(self.model_store or ModelStore(),
+                                                         warning=self._algorithm_failed)
+            runner = self._algorithm_runner
+        result = runner.infer(packet, options, stop_event=self._stop_event)
+        if result is not None:
+            self.algorithm_warning = ""
+        return result
+
+    def _algorithm_failed(self, message):
+        self.algorithm_warning = message
+
+    def market_latest(self):
+        return self._algorithm_runner.latest() if self._algorithm_runner is not None else None
+
+    def reset_algorithm(self):
+        if self._algorithm_runner is not None:
+            self._algorithm_runner.reset()
+        self.algorithm_warning = ""
+        self.person, self.hit, self.last_person = False, 0, 0.0
+        self._last_detection_seq = None
+        self._last_market_decision = None
+
     def info(self):
         st = self.state
         return {
@@ -590,6 +634,7 @@ class Cam(threading.Thread):
             "person": bool(self.person), "rec": self.recording(),
             "error": self.last_error,
             "annotation_warning": self.annotation_warning,
+            "algorithm_warning": self.algorithm_warning,
             "source_type": "local" if self.is_local else "rtsp",
             "device_name": self.spec.get("device_name", "") if self.is_local else "",
         }

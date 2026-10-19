@@ -507,7 +507,7 @@ class ClawBot(threading.Thread):
         "可以直接这样说：\n"
         "· 预览1号 / 预览 农场 —— 打开该路实时画面（按电脑预览设置连接）\n"
         "· 预览 —— 一路时直接发链接，多路时显示可选项\n"
-        "· 今天事件 / 昨天事件 农场 —— 列出已完成事件录像\n"
+        "· 今天事件 / 今日事件 / 昨天事件 农场 —— 列出已完成事件录像\n"
         "· 事件 2026-10-18 1号 —— 指定日期和摄像头\n"
         "· 最新事件 [日期/摄像头] —— 发最新一段（默认今天）\n"
         "· 今天事件 第2条 —— 查询后直接发第2段\n"
@@ -535,7 +535,7 @@ class ClawBot(threading.Thread):
                 pass
         if "前天" in t:
             return self._day_offset(-2)
-        if "今天" in t:
+        if "今天" in t or "今日" in t:
             return self._day_offset(0)
         if "昨天" in t:
             return self._day_offset(-1)
@@ -569,13 +569,13 @@ class ClawBot(threading.Thread):
         """Resolve an entire selector; residual input is an error, never all cameras."""
         date_pattern = r"(?<!\d)\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?!\d)"
         dates = list(re.finditer(date_pattern, text))
-        relative = re.findall(r"前天|今天|昨天", text)
+        relative = re.findall(r"前天|今天|今日|昨天", text)
         if len(dates) + len(relative) > 1:
             return None, None, "请一次只指定一个日期。"
         day = self._parse_day(text)
         if dates and not day:
             return None, None, "日期无效，请使用 YYYY-MM-DD，例如 2026-10-18。"
-        remaining = re.sub(date_pattern + r"|前天|今天|昨天", " ", text)
+        remaining = re.sub(date_pattern + r"|前天|今天|今日|昨天", " ", text)
         cam = self._parse_cam(remaining)
         if cam:
             name = (cam.get("name") or "").strip()

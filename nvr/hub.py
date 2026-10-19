@@ -7,6 +7,7 @@
   * 定时抽帧仍会写盘；事件录像按检测状态启停。
 """
 import os
+import copy
 import shutil
 import threading
 import time
@@ -24,6 +25,10 @@ class Hub(object):
         self.log = log or self._default_log
         self.cams = {}
         self.lock = threading.RLock()
+        self.algorithm_lock = threading.RLock()
+        self._algorithm_apply_generation = 0
+        from .model_store import ModelStore
+        self.model_store = ModelStore()
 
         # 异步同步（web 请求只置标志）
         self._need_sync = False
@@ -189,6 +194,7 @@ class Hub(object):
 
     def stop_all(self):
         self._stop.set()
+        self.model_store.close()
         # Share the lock with the whole link/sync operation: an in-flight
         # make_link() may start a listener, so shutdown must finish after it.
         with self._preview_lock:
@@ -264,6 +270,7 @@ class Hub(object):
                 if cid in self.cams:
                     continue
                 cam = Cam(s, self.cfg, log=self.log)
+                cam.model_store = self.model_store
                 self.cams[cid] = cam
                 cam.start()
                 self.log("[连接] 启动 %s" % (s.get("name") or cid))
@@ -302,66 +309,157 @@ class Hub(object):
             try:
                 d = self.cfg.get("detect")
                 interval = max(0.05, float(d.get("interval", 0.5) or 0.5))
-                confirm = max(1, int(d.get("confirm", 2) or 2))
-                gone = max(1.0, float(d.get("gone_sec", 8) or 8))
-                cool = max(0.0, float(d.get("cooldown", 10)))
-                enabled = bool(d.get("enabled", True))
 
                 with self.lock:
                     cams = list(self.cams.values())
                 for cam in cams:
                     if self._stop.is_set():
                         return
-                    if not enabled or not cam.detect_on:
-                        cam.person = False
-                        cam.hit = 0
-                        if cam.recording():
-                            cam.stop_record()
-                            cam.last_event_end = time.time()
-                        continue
-                    if cam.state != "online":
-                        cam.person = False
-                        cam.hit = 0
-                        if cam.recording():
-                            cam.stop_record()
-                            cam.last_event_end = time.time()
-                        continue
-                    img, packet = cam.frame_sample()
-                    seq = packet.seq
-                    if img is None or (seq is not None and seq == getattr(cam, "_last_detection_seq", None)):
-                        if cam.person and time.time() - cam.last_person > gone:
-                            cam.person = False
-                            cam.hit = 0
-                            cam.stop_record()
-                            cam.last_event_end = time.time()
-                        continue
-                    cam._last_detection_seq = seq
-                    try:
-                        detector = cam.ensure_detector()
-                        has = detector.process(img)
-                        trigger = packet.detected(detector, img, has)
-                    except Exception:
-                        has = False
-                    if has:
-                        cam.hit += 1
-                        cam.last_person = time.time()
-                        if cam.hit >= confirm:
-                            cam.person = True
-                            if not cam.recording() and (time.time() - cam.last_event_end) >= cool:
-                                cam.start_record(trigger)
-                    else:
-                        cam.hit = 0
-                        if cam.person and (time.time() - cam.last_person) > gone:
-                            cam.person = False
-                            cam.stop_record()
-                            cam.last_event_end = time.time()
-                    if cam.person and cam.rec_too_long():
-                        cam.stop_record()
-                        cam.last_event_end = time.time()
+                    with self.algorithm_lock:
+                        # Read fresh options after an apply waiting for this lock.
+                        current = self.cfg.get("detect")
+                        self._detect_camera(cam, current)
             except Exception as e:
                 self.log("[检测] 异常: %s" % e)
             if self._stop.wait(interval):
                 return
+
+    def algorithm_revision(self):
+        from .algorithm_catalog import revision_for
+        return revision_for(dict(self.cfg.get("algorithms")))
+
+    def reset_algorithm_events(self):
+        """Caller holds algorithm_lock; close old clips before resetting models."""
+        with self.lock:
+            cams = list(self.cams.values())
+        for cam in cams:
+            if cam.recording():
+                cam.stop_record()
+                cam.last_event_end = time.time()
+            cam.reset_algorithm()
+
+    def apply_algorithms(self, options):
+        from .algorithm_catalog import validate_options
+        options = validate_options(options)
+        with self.algorithm_lock:
+            self._algorithm_apply_generation += 1
+            generation = self._algorithm_apply_generation
+        # All input/model checks finish before touching memory, disk or events.
+        self.model_store.prepare(options["model_id"])
+        with self.algorithm_lock:
+            if generation != self._algorithm_apply_generation:
+                raise ValueError("已有较新的算法设置请求，本次未应用，请刷新商城")
+            with self.cfg.lock:
+                previous = self.cfg.data
+                proposed = copy.deepcopy(previous)
+                proposed["algorithms"] = options
+                proposed.setdefault("detect", {})["mode"] = "market"
+                changed = (previous.get("detect", {}).get("mode") != "market"
+                           or previous.get("algorithms") != options)
+                self.cfg.data = proposed
+                try:
+                    self.cfg.save()
+                except Exception:
+                    self.cfg.data = previous
+                    raise ValueError("算法设置保存失败，原设置和当前录像未改变") from None
+            if changed:
+                self.reset_algorithm_events()
+        return options
+
+    def _detect_camera(self, cam, d):
+        confirm = max(1, int(d.get("confirm", 2) or 2))
+        gone = max(1.0, float(d.get("gone_sec", 8) or 8))
+        cool = max(0.0, float(d.get("cooldown", 10)))
+        enabled = bool(d.get("enabled", True))
+        if not enabled or not cam.detect_on:
+            cam.person = False
+            cam.hit = 0
+            if cam.recording():
+                cam.stop_record()
+                cam.last_event_end = time.time()
+            return
+        if cam.state != "online":
+            cam.person = False
+            cam.hit = 0
+            if cam.recording():
+                cam.stop_record()
+                cam.last_event_end = time.time()
+            return
+        img, packet = cam.frame_sample()
+        market = d.get("mode") == "market"
+        if market:
+            previous_source = getattr(cam, "_market_source", None)
+            if previous_source is not None and previous_source != packet.source:
+                if cam.recording():
+                    cam.stop_record()
+                    cam.last_event_end = time.time()
+                cam.reset_algorithm()
+            cam._market_source = packet.source
+        seq = packet.seq
+        if img is None or (seq is not None and seq == getattr(cam, "_last_detection_seq", None)):
+            if (cam.person or (market and cam.hit)) and time.time() - cam.last_person > gone:
+                was_active = cam.person
+                cam.person = False
+                cam.hit = 0
+                if was_active:
+                    cam.stop_record()
+                    cam.last_event_end = time.time()
+            return
+        if not market:
+            cam._last_detection_seq = seq
+        try:
+            if d.get("mode") == "market":
+                result = cam.market_infer(packet)
+                decision_packet = packet
+                if result is None:
+                    latest = cam.market_latest()
+                    if latest is not None:
+                        candidate, candidate_packet = latest
+                        if candidate_packet.source == packet.source and candidate_packet.seq <= packet.seq:
+                            result, decision_packet = candidate, candidate_packet
+                if (result is None or not result.matches(decision_packet, self.algorithm_revision())
+                        or not 0 <= time.time() - decision_packet.timestamp <= .75
+                        or result.key == getattr(cam, "_last_market_decision", None)):
+                    has = None
+                else:
+                    has = bool(result.detections)
+                    cam._last_market_decision = result.key
+                    cam._last_detection_seq = decision_packet.seq
+                trigger = decision_packet
+            else:
+                detector = cam.ensure_detector()
+                has = detector.process(img)
+                trigger = packet.detected(detector, img, has)
+        except Exception:
+            has = None if d.get("mode") == "market" else False
+        if has is None:
+            if (cam.person or cam.hit) and time.time() - cam.last_person > gone:
+                was_active = cam.person
+                cam.person, cam.hit = False, 0
+                if was_active:
+                    cam.stop_record()
+                    cam.last_event_end = time.time()
+            elif cam.person and cam.rec_too_long():
+                cam.person, cam.hit = False, 0
+                cam.stop_record()
+                cam.last_event_end = time.time()
+            return
+        if has:
+            cam.hit += 1
+            cam.last_person = trigger.timestamp if d.get("mode") == "market" else time.time()
+            if cam.hit >= confirm:
+                cam.person = True
+                if not cam.recording() and (time.time() - cam.last_event_end) >= cool:
+                    cam.start_record(trigger)
+        else:
+            cam.hit = 0
+            if cam.person and (time.time() - cam.last_person) > gone:
+                cam.person = False
+                cam.stop_record()
+                cam.last_event_end = time.time()
+        if cam.person and cam.rec_too_long():
+            cam.stop_record()
+            cam.last_event_end = time.time()
 
     # ---------------- 每日任务：推送 + 清理 ----------------
 

@@ -1,6 +1,7 @@
 import io
 import os
 import subprocess
+import struct
 import tempfile
 import time
 import unittest
@@ -51,6 +52,56 @@ class MediaTests(OfflineTestCase):
         raw = staged.read_bytes()
         staged.write_bytes(raw[:-256])
         self.assertFalse(ffmpeg.validate_video(str(staged)))
+
+    def test_validation_decodes_final_coded_samples_despite_intact_mp4_tables(self):
+        """Corrupt late NAL lengths only; file length/container tables survive."""
+        blob = Path(self.source).read_bytes()
+        def atoms(start, end):
+            while start + 8 <= end:
+                size, name = struct.unpack_from(">I4s", blob, start)
+                header = 8
+                if size == 1:
+                    size, header = struct.unpack_from(">Q", blob, start + 8)[0], 16
+                elif size == 0:
+                    size = end - start
+                self.assertGreaterEqual(size, header)
+                self.assertLessEqual(start + size, end)
+                yield name, start + header, start + size
+                start += size
+        def child(parent, name):
+            return next((start, end) for kind, start, end in atoms(*parent) if kind == name)
+        samples = []
+        moov = child((0, len(blob)), b"moov")
+        for kind, start, end in atoms(*moov):
+            if kind != b"trak":
+                continue
+            mdia = child((start, end), b"mdia")
+            if blob[child(mdia, b"hdlr")[0] + 8:child(mdia, b"hdlr")[0] + 12] != b"vide":
+                continue
+            stbl = child(child(mdia, b"minf"), b"stbl")
+            stsz, stco, stsc = (child(stbl, name) for name in (b"stsz", b"stco", b"stsc"))
+            fixed, count = struct.unpack_from(">II", blob, stsz[0] + 4)
+            sizes = [fixed] * count if fixed else list(struct.unpack_from(">%dI" % count, blob, stsz[0] + 12))
+            chunks = struct.unpack_from(">%dI" % struct.unpack_from(">I", blob, stco[0] + 4)[0], blob, stco[0] + 8)
+            rows = [struct.unpack_from(">III", blob, pos) for pos in range(stsc[0] + 8, stsc[1], 12)]
+            index = 0
+            for chunk, offset in enumerate(chunks, 1):
+                for _ in range(next(row[1] for row in reversed(rows) if row[0] <= chunk)):
+                    samples.append((offset, sizes[index]))
+                    offset, index = offset + sizes[index], index + 1
+        self.assertGreater(len(samples), 100)
+        self.assertTrue(ffmpeg.validate_video(self.source))
+        for back in (1, 2):
+            with self.subTest(back=back):
+                offset, size = samples[-back]
+                altered = bytearray(blob)
+                struct.pack_into(">I", altered, offset, size + 4096)
+                output = self.root / ("late-sample-%d.part.mp4" % back)
+                output.write_bytes(altered)
+                self.assertEqual(len(altered), len(blob))
+                reasons = []
+                self.assertFalse(ffmpeg.validate_video(str(output), diagnostic=reasons.append))
+                self.assertEqual(reasons, ["tail_decode_failed"])
 
     def test_preview_jpeg_timelapse_and_clean_shutdown(self):
         self.cfg.set("record", "timelapse_sec", 0.25, save=False)
@@ -125,13 +176,35 @@ class MediaTests(OfflineTestCase):
 class StreamAndDetectionTests(unittest.TestCase):
     def test_event_validation_rejects_timeout_or_missing_end_sample(self):
         with tempfile.NamedTemporaryFile(suffix=".part.mp4") as output:
-            for result in (SimpleNamespace(returncode=0, stdout=b"0, 0, 0, 1, 100, hash\n"),
-                           SimpleNamespace(returncode=1, stdout=b"0, 0, 0, 1, 100, hash\n1, 0, 0, 1, 100, hash\n")):
-                with mock.patch("nvr.ffmpeg.run", return_value=result) as runner:
+            valid = SimpleNamespace(returncode=0, stdout=b"0, 0, 0, 1, 100, hash\n")
+            empty = SimpleNamespace(returncode=0, stdout=b"# no decoded frames\n")
+            invalid = SimpleNamespace(returncode=1, stdout=b"0, 0, 0, 1, 100, hash\n")
+            for results in ((empty,), (invalid,), (valid, empty), (valid, invalid)):
+                with mock.patch("nvr.ffmpeg.run", side_effect=results) as runner:
                     self.assertFalse(ffmpeg.validate_video(output.name))
-                    self.assertEqual(runner.call_args.kwargs["timeout"], 3)
+                    self.assertLessEqual(runner.call_args.kwargs["timeout"], 3)
+                    self.assertGreater(runner.call_args.kwargs["timeout"], 0)
             with mock.patch("nvr.ffmpeg.run", side_effect=subprocess.TimeoutExpired("fixture", 3)):
                 self.assertFalse(ffmpeg.validate_video(output.name))
+
+    def test_head_tail_validation_share_deadline_and_tail_has_no_frame_limit(self):
+        with tempfile.NamedTemporaryFile(suffix=".part.mp4") as output:
+            valid = SimpleNamespace(returncode=0, stdout=b"0, 0, 0, 1, 100, hash\n")
+            with mock.patch("nvr.ffmpeg.run", return_value=valid) as runner, \
+                 mock.patch("nvr.ffmpeg.time.monotonic", side_effect=(0., .25, 1.5)):
+                self.assertTrue(ffmpeg.validate_video(output.name))
+            self.assertEqual([call.kwargs["timeout"] for call in runner.call_args_list], [2.75, 1.5])
+            self.assertIn("-frames:v", runner.call_args_list[0].args[0])
+            tail = runner.call_args_list[1].args[0]
+            self.assertIn("-sseof", tail)
+            self.assertNotIn("-frames:v", tail)
+            self.assertNotIn("-t", tail)
+            reasons = []
+            with mock.patch("nvr.ffmpeg.run", return_value=valid) as runner, \
+                 mock.patch("nvr.ffmpeg.time.monotonic", side_effect=(0., .25, 3.1)):
+                self.assertFalse(ffmpeg.validate_video(output.name, diagnostic=reasons.append))
+            runner.assert_called_once()
+            self.assertEqual(reasons, ["tail_budget_exhausted"])
 
     def test_real_haar_model_and_classifier_are_available_and_executable(self):
         """Verify the installed OpenCV API/assets, not detection accuracy."""

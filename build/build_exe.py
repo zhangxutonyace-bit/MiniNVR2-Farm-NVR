@@ -66,14 +66,26 @@ def build(clean=False):
     # Fail before invoking the packager if the approved offline asset drifted.
     sys.path.insert(0, REPO)
     from nvr.person_localizer import verify_model
+    from nvr.algorithm_catalog import verify_catalog_asset
+    from nvr.event_labels import verify_font
     try:
         person_model = verify_model()
+        catalog_asset = verify_catalog_asset()
+        label_font = verify_font()
     except RuntimeError as exc:
         print(">>> 人物框模型校验失败: %s" % exc)
         return 1
     person_notices = Path(REPO) / "third_party" / "NanoDet"
+    yolox_notices = Path(REPO) / "third_party" / "YOLOX"
+    font_notices = Path(REPO) / "third_party" / "LabelFont"
     if not all((person_notices / name).is_file() for name in ("LICENSE", "SOURCE.json")):
         print(">>> 缺少人物框模型许可证或来源清单")
+        return 1
+    if not all((yolox_notices / name).is_file() for name in ("LICENSE", "SOURCE.json")):
+        print(">>> 缺少 YOLOX 许可证或来源清单")
+        return 1
+    if not all((font_notices / name).is_file() for name in ("OFL.txt", "NOTICE.txt", "SOURCE.json")):
+        print(">>> 缺少中文标签字体许可证或来源清单")
         return 1
 
     ff = ffmpeg_path()
@@ -99,6 +111,10 @@ def build(clean=False):
         haar_dir.rstrip("/\\") + sep + "cv2/data",
         str(person_model) + sep + "models",
         str(person_notices) + sep + "third_party/NanoDet",
+        str(yolox_notices) + sep + "third_party/YOLOX",
+        str(catalog_asset) + sep + "third_party/AlgorithmCatalog",
+        str(label_font) + sep + "fonts",
+        str(font_notices) + sep + "third_party/LabelFont",
     ]
     binaries = [packaged_ff + sep + "."]
 

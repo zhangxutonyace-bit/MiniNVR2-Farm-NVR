@@ -336,28 +336,49 @@ def cmd_jpeg_record(out, fps=8):
             "-pix_fmt", "yuv420p", "-fps_mode", "vfr", "-movflags", "+faststart", "-f", "mp4", out]
 
 
-def validate_video(path, timeout=3):
-    """Bounded real decode of both ends of a staged MP4 before publication.
+def validate_video(path, timeout=3, diagnostic=None):
+    """Decode one head frame and the last two seconds THROUGH EOF.
 
-    A successful encoder exit plus decoded first/tail frame hashes verifies the
-    container and decodes the last two seconds through EOF without a long event inside the
-    global detection scheduler. This is deliberately not a whole-file audit.
+    Separate processes share one monotonic budget. A frame limit on a combined
+    multi-input output can stop all streams after one tail frame, hiding late
+    corruption; the tail process deliberately has no frame/time output limit.
+    This remains a bounded head/tail check, not a whole-file integrity audit.
     """
+    def fail(reason):
+        if diagnostic is not None:
+            try:
+                diagnostic(reason)
+            except Exception:
+                pass
+        return False
+
     if not os.path.isfile(path):
-        return False
+        return fail("missing_file")
+    executable = ffmpeg_exe()
+    deadline = time.monotonic() + max(0., float(timeout))
+    prefix = [executable, "-hide_banner", "-loglevel", "error", "-xerror", "-threads", "1"]
+    phase = "head"
     try:
-        result = run([ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-xerror",
-                      "-i", path, "-sseof", "-2", "-i", path,
-                      "-map", "0:v:0", "-map", "1:v:0",
-                      "-frames:v:0", "1", "-f", "framehash", "-"],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                     stderr=subprocess.PIPE, timeout=timeout)
-        samples = {(line.split(",", 1)[0]).strip()
-                   for line in (result.stdout or b"").decode("utf-8", "replace").splitlines()
-                   if line and not line.startswith("#") and "," in line}
-        return result.returncode == 0 and {"0", "1"}.issubset(samples)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+        for phase, arguments in (("head", ["-i", path, "-map", "0:v:0", "-frames:v", "1"]),
+                                 ("tail", ["-sseof", "-2", "-i", path, "-map", "0:v:0"])):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return fail(phase + "_budget_exhausted")
+            result = run(prefix + arguments + ["-an", "-sn", "-threads", "1", "-f", "framehash", "-"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         timeout=remaining)
+            if result.returncode != 0:
+                return fail(phase + "_decode_failed")
+            samples = [line for line in (result.stdout or b"").decode("utf-8", "replace").splitlines()
+                       if not line.startswith("#") and len(line.split(",")) >= 6
+                       and line.split(",", 1)[0].strip() == "0"]
+            if not samples:
+                return fail(phase + "_no_decoded_frame")
+        return True
+    except subprocess.TimeoutExpired:
+        return fail(phase + "_timeout")
+    except OSError:
+        return fail(phase + "_process_error")
 
 
 def write_concat(files, listf, fps=1):

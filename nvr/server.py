@@ -15,6 +15,7 @@ import secrets
 import sys
 import time
 import urllib.parse
+from contextlib import nullcontext
 
 import cv2
 import numpy as np
@@ -374,25 +375,29 @@ def create_app(cfg, hub, on_quit=None):
     @app.route("/api/cameras/<cid>/toggle", methods=["POST"])
     @need_auth
     def api_cam_toggle(cid):
-        c = cfg.get_camera(cid)
-        if not c:
-            return jsonify({"ok": False, "msg": "不存在"}), 404
-        c["enabled"] = not bool(c.get("enabled", True))
-        cfg.save()
+        with cfg.lock:
+            c = cfg.get_camera(cid)
+            if not c:
+                return jsonify({"ok": False, "msg": "不存在"}), 404
+            c["enabled"] = not bool(c.get("enabled", True))
+            cfg.save()
+            enabled = c["enabled"]
         hub.request_sync()
-        return jsonify({"ok": True, "enabled": c["enabled"]})
+        return jsonify({"ok": True, "enabled": enabled})
 
     @app.route("/api/cameras/<cid>/detect", methods=["POST"])
     @need_auth
     def api_cam_detect(cid):
-        c = cfg.get_camera(cid)
-        if not c:
-            return jsonify({"ok": False, "msg": "不存在"}), 404
         d = request.get_json(silent=True) or {}
-        c["detect"] = bool(d.get("on", True))
-        cfg.save()
+        with cfg.lock:
+            c = cfg.get_camera(cid)
+            if not c:
+                return jsonify({"ok": False, "msg": "不存在"}), 404
+            c["detect"] = bool(d.get("on", True))
+            cfg.save()
+            detect = c["detect"]
         hub.request_sync()
-        return jsonify({"ok": True, "detect": c["detect"]})
+        return jsonify({"ok": True, "detect": detect})
 
     # ---------------- 扫描 ----------------
     @app.route("/api/scan", methods=["POST"])
@@ -416,7 +421,7 @@ def create_app(cfg, hub, on_quit=None):
         return jsonify({"ok": True})
 
     # ---------------- 设置 ----------------
-    _SEC = ("site", "server", "stream", "detect", "record", "mail", "scan",
+    _SEC = ("site", "server", "stream", "detect", "algorithms", "record", "mail", "scan",
             "clawbot", "preview", "remote_preview", "system")
     _SECRETS = {"server": ("token",), "mail": ("pass",), "scan": ("pwds",),
                 "clawbot": ("token",)}
@@ -437,6 +442,13 @@ def create_app(cfg, hub, on_quit=None):
         d = request.get_json(silent=True)
         if not isinstance(d, dict):
             return jsonify({"ok": False, "msg": "设置必须为对象"}), 400
+        if "algorithms" in d:
+            return jsonify({"ok": False, "msg": "请到算法商城勾选目标并点击应用"}), 400
+        if "detect" in d:
+            mode = d["detect"].get("mode") if isinstance(d["detect"], dict) else None
+            if (not isinstance(d["detect"], dict) or mode not in (None, "auto", "haar", "motion", "market")
+                    or (mode == "market" and cfg.get("detect", "mode") != "market")):
+                return jsonify({"ok": False, "msg": "请先到算法商城应用模型；旧模式可在这里选择"}), 400
         if "record" in d:
             from .config import validate_target_options
             try:
@@ -465,16 +477,32 @@ def create_app(cfg, hub, on_quit=None):
         new_token = (d.get("server") or {}).get("token") if isinstance(d.get("server"), dict) else None
         if new_token is not None and not isinstance(new_token, str):
             return jsonify({"ok": False, "msg": "访问口令必须为文字"}), 400
-        with cfg.lock:
-            for sec, vals in d.items():
-                if sec in _SEC and isinstance(vals, dict):
-                    for k, v in vals.items():
-                        if k.endswith("_configured"):
-                            continue
-                        if k in _SECRETS.get(sec, ()) and not v:
-                            continue  # An empty password field keeps the existing credential.
-                        cfg.set(sec, k, v, save=False)
-            cfg.save()
+        with getattr(hub, "algorithm_lock", nullcontext()):
+            with cfg.lock:
+                if (isinstance(d.get("detect"), dict) and d["detect"].get("mode") == "market"
+                        and cfg.get("detect", "mode") != "market"):
+                    return jsonify({"ok": False, "msg": "请先到算法商城应用模型"}), 400
+                before = cfg.data
+                old_mode = cfg.get("detect", "mode")
+                cfg.data = copy.deepcopy(before)
+                for sec, vals in d.items():
+                    if sec in _SEC and isinstance(vals, dict):
+                        for k, v in vals.items():
+                            if k.endswith("_configured"):
+                                continue
+                            if k in _SECRETS.get(sec, ()) and not v:
+                                continue
+                            cfg.set(sec, k, v, save=False)
+                try:
+                    cfg.save()
+                except OSError:
+                    cfg.data = before
+                    return jsonify({"ok": False, "msg": "设置保存失败，原设置未改变"}), 400
+            if (isinstance(d.get("detect"), dict) and "mode" in d["detect"]
+                    and hasattr(hub, "_algorithm_apply_generation")):
+                hub._algorithm_apply_generation += 1
+            if old_mode != cfg.get("detect", "mode") and hasattr(hub, "reset_algorithm_events"):
+                hub.reset_algorithm_events()
         if new_token:
             session.clear()
             session["auth"] = token_fingerprint(new_token)
@@ -484,6 +512,56 @@ def create_app(cfg, hub, on_quit=None):
         if hasattr(hub, "sync_preview"):
             hub.sync_preview()
         return jsonify({"ok": True})
+
+    # Algorithms are management-only routes, protected by the existing origin,
+    # JSON, local-only/token guards. Preview listeners never expose these APIs.
+    @app.route("/api/algorithms")
+    def api_algorithms():
+        from .algorithm_catalog import public_capabilities, public_catalog, validate_persisted_options
+        status = hub.model_store.status()
+        error = ""
+        with cfg.lock:
+            raw = copy.deepcopy(cfg.data.get("algorithms"))
+            mode = cfg.get("detect", "mode")
+        try:
+            active = validate_persisted_options(raw)
+        except ValueError as exc:
+            error = str(exc)
+            active = {}
+        return jsonify(dict(status, ok=True, catalog=public_catalog(),
+                            configuration_error=error,
+                            capabilities=public_capabilities(),
+                            active=dict(active, mode=mode)))
+
+    @app.route("/api/algorithms/download", methods=["POST"])
+    @need_auth
+    def api_algorithm_download():
+        value = request.get_json()
+        try:
+            if not isinstance(value, dict) or set(value) != {"model_id"}:
+                raise ValueError("下载只能指定商城模型 ID")
+            hub.model_store.start(value["model_id"])
+        except ValueError as exc:
+            return jsonify({"ok": False, "msg": str(exc)}), 400
+        return jsonify({"ok": True})
+
+    @app.route("/api/algorithms/cancel", methods=["POST"])
+    @need_auth
+    def api_algorithm_cancel():
+        if request.get_json():
+            return jsonify({"ok": False, "msg": "取消下载无需附加参数"}), 400
+        hub.model_store.cancel()
+        return jsonify({"ok": True})
+
+    @app.route("/api/algorithms/apply", methods=["POST"])
+    @need_auth
+    def api_algorithm_apply():
+        try:
+            options = hub.apply_algorithms(request.get_json())
+        except (ValueError, OSError) as exc:
+            message = str(exc) if isinstance(exc, ValueError) else "算法文件不可用，请重新下载"
+            return jsonify({"ok": False, "msg": message}), 400
+        return jsonify({"ok": True, "active": dict(options, mode="market")})
 
     @app.route("/api/preview")
     def api_preview_status():

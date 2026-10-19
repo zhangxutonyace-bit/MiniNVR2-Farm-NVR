@@ -60,6 +60,32 @@ def validate_bundled_person_assets(executable: Path) -> dict:
             "scope": "Offline CPU person annotation only", "notices_in_exe": True}
 
 
+def validate_bundled_algorithm_assets(executable: Path) -> dict:
+    """Inspect fixed catalog, adapters and notices without executing the EXE."""
+    from PyInstaller.archive.readers import CArchiveReader
+    from nvr.algorithm_catalog import catalog_document, verify_catalog_asset
+    from nvr.event_labels import FONT_NAME, FONT_BYTES, FONT_SHA256, verify_font
+    verify_catalog_asset()
+    verify_font()
+    archive = CArchiveReader(str(executable))
+    names = {name.replace("\\", "/"): name for name in archive.toc}
+    for relative in ("third_party/AlgorithmCatalog/catalog.json", "third_party/YOLOX/LICENSE",
+                     "third_party/YOLOX/SOURCE.json", "fonts/" + FONT_NAME,
+                     "third_party/LabelFont/OFL.txt", "third_party/LabelFont/NOTICE.txt",
+                     "third_party/LabelFont/SOURCE.json"):
+        if relative not in names or archive.extract(names[relative]) != (REPO / relative).read_bytes():
+            raise ValueError("Executable algorithm asset differs from approved source: " + relative)
+    pyz = archive.open_embedded_archive("PYZ.pyz")
+    modules = ("nvr.algorithm_catalog", "nvr.algorithm_types", "nvr.object_models",
+               "nvr.model_store", "nvr.algorithm_runtime", "nvr.event_labels")
+    if any(name not in pyz.toc for name in modules):
+        raise ValueError("Executable is missing an algorithm-store adapter")
+    return {"catalog": catalog_document(), "notices_in_exe": True,
+            "chinese_label_font": {"name": FONT_NAME, "bytes": FONT_BYTES, "sha256": FONT_SHA256,
+                                    "license": "OFL-1.1", "system_font_required": False},
+            "scope": "Local CPU selected-class events; YOLOX weights download only after explicit action"}
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -207,6 +233,8 @@ def copy_user_guides(root: Path, version: str, include_preview: bool = False) ->
         guides.append(("REMOTE_PREVIEW.md", "微信远程预览-操作步骤.txt"))
     if tuple(map(int, version.split("."))) >= (2, 4, 0):
         guides.append(("LOCAL_CAMERA_QUICK_START.md", "电脑内置USB摄像头-操作步骤.txt"))
+    if tuple(map(int, version.split("."))) >= (3, 0, 0):
+        guides.append(("ALGORITHM_STORE_QUICK_START.md", "算法商城-操作步骤.txt"))
     for source, target in guides:
         write_windows_guide(REPO / "docs" / source, root / target)
     return [target for _, target in guides]
@@ -304,6 +332,24 @@ def collect_notices(root: Path, release_inputs: Path) -> list[dict]:
         person_files.append(destination.relative_to(root).as_posix())
     components.append({"name": "OpenCV Zoo NanoDet", "version": "2022nov",
                        "license": "Apache-2.0", "notice_files": person_files})
+    if (REPO / "third_party" / "YOLOX").is_dir():
+        files = []
+        for name in ("LICENSE", "SOURCE.json"):
+            destination = root / "THIRD_PARTY_NOTICES" / "YOLOX" / name
+            checked_copy(REPO / "third_party" / "YOLOX" / name, destination)
+            files.append(destination.relative_to(root).as_posix())
+        checked_copy(REPO / "third_party" / "AlgorithmCatalog" / "catalog.json",
+                     root / "THIRD_PARTY_NOTICES" / "YOLOX" / "catalog.json")
+        components.append({"name": "YOLOX model adapters and curated catalog", "version": "0.1.1rc0 / Zoo 2022nov",
+                           "license": "Apache-2.0", "notice_files": files})
+    if (REPO / "third_party" / "LabelFont").is_dir():
+        files = []
+        for name in ("OFL.txt", "NOTICE.txt", "SOURCE.json"):
+            destination = root / "THIRD_PARTY_NOTICES" / "LabelFont" / name
+            checked_copy(REPO / "third_party" / "LabelFont" / name, destination)
+            files.append(destination.relative_to(root).as_posix())
+        components.append({"name": "MiniNVR Label Sans SC (Noto Sans CJK SC subset)",
+                           "version": "2.004 subset", "license": "OFL-1.1", "notice_files": files})
     return components
 
 
@@ -367,6 +413,8 @@ def main() -> int:
     original_hash = sha256(executable)
     original_size = executable.stat().st_size
     person_assets = validate_bundled_person_assets(executable)
+    algorithm_assets = (validate_bundled_algorithm_assets(executable)
+                        if tuple(map(int, args.version.split("."))) >= (3, 0, 0) else None)
     validate_build(read_record(args.build_record), args.version, original_hash, original_size)
     startup_checks = STARTUP_CHECKS + (("remote_preview_default_off",) if remote_release else ())
     startup = validate_automatic(read_record(args.startup_record), args.version, startup_checks, "startup",
@@ -436,6 +484,7 @@ def main() -> int:
         "packager": {"name": "PyInstaller", "version": metadata.version("PyInstaller")},
         "runtime_components": components,
         "annotation_model": person_assets,
+        "algorithm_store": algorithm_assets,
         "user_guides": guides,
         "verification": {"existing_local_exe_startup": startup, "clawbot_event_simulation": events,
                          "lan_preview_simulation": preview, phone_verification_key: phone_preview,

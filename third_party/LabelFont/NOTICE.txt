@@ -1,0 +1,30 @@
+MiniNVR Label Sans SC Regular - label-only subset
+
+Original typeface: Noto Sans CJK SC Regular, version 2.004.
+Upstream: https://github.com/notofonts/noto-cjk
+Tag: Sans2.004
+Commit: 523d033d6cb47f4a80c58a35753646f5c3608a78
+
+Original copyright notice, preserved from the font name table:
+© 2014-2021 Adobe (http://www.adobe.com/).
+
+This Modified Version remains licensed under the SIL Open Font License 1.1.
+See the accompanying OFL.txt. Distribute this notice and OFL.txt with the font.
+
+Changes: retained printable ASCII U+0020-U+007E and only the characters needed
+for the 13 labels listed below plus the optional phrase 识别目标. Removed other
+glyphs, hinting, layout feature rules and the unused BASE table; desubroutinized
+CFF outlines. Glyph designs were not redrawn. Renamed the primary family,
+full name, unique ID, PostScript and CFF font names to MiniNVR Label Sans SC
+to identify this derivative independently. Original copyright and license
+metadata are retained. The upstream authors do not endorse this derivative.
+
+Labels: 行人, 汽车, 座椅, 餐桌, 猫, 狗, 手机, 沙发, 床, 电视, 笔记本电脑, 杯子, 瓶子
+
+FontTools 4.67.0 was used only at build time. Runtime use needs
+only the application's existing Pillow/FreeType support. No system font
+installation, network access, or FontTools runtime dependency is required.
+
+To rebuild, run ../build_subset.py after ../download_sources.py. Both scripts
+operate within this ignored preparation directory. The downloaded upstream
+source and temporary build tool are not intended for product packaging.

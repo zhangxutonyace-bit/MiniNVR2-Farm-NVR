@@ -15,6 +15,7 @@ from .detect import Detector
 from .person_localizer import PersonLocalizer
 from .safety import redact_urls
 from .target_tracking import TargetTracker
+from .algorithm_catalog import revision_for
 
 
 def _raw(sample):
@@ -112,7 +113,7 @@ class FramePacket:
 
 
 class EventOverlay:
-    def __init__(self, color, detect_options, warning=None, log=None):
+    def __init__(self, color, detect_options, warning=None, log=None, runtime=None, algorithm_options=None):
         self.color = tuple(int(color[i:i + 2], 16) for i in (5, 3, 1))
         self.options = dict(detect_options)
         self.warning = warning or (lambda message: None)
@@ -124,6 +125,9 @@ class EventOverlay:
         self.cached_packet = None
         self.cached_jpeg = b""
         self.warned = False
+        self.runtime = runtime
+        self.algorithm_options = dict(algorithm_options or {})
+        self.label_renderer = None
 
     def failed(self, error):
         if self.warned:
@@ -171,13 +175,27 @@ class EventOverlay:
                 self.reset()
             if self.identity != identity:
                 self.reset()
-                if (self.options.get("mode") or "auto").lower() == "motion":
+                mode = (self.options.get("mode") or "auto").lower()
+                if mode == "market":
+                    self.tracker = TargetTracker(self.algorithm_options.get("confidence", .35), object_boxes=True)
+                elif mode == "motion":
                     self.detector = Detector(self.options, independent=True)
                 else:
                     self.localizer = PersonLocalizer()
                     self.tracker = TargetTracker()
                 self.identity = identity
-            if self.detector is not None:
+            labeled = False
+            if (self.options.get("mode") or "auto").lower() == "market":
+                result = self.runtime(packet) if self.runtime is not None else None
+                if (result is None or not result.matches(packet, revision_for(self.algorithm_options))
+                        or result.size != (width, height)):
+                    # A result from another frame/model is never a display hint.
+                    self.tracker.reset()
+                    return packet.jpeg
+                boxes = self.tracker.update(image, result.detections, packet.timestamp,
+                                            packet.seq, packet.source)
+                labeled = True
+            elif self.detector is not None:
                 positive = self.detector.process(image)
                 boxes = self.detector.confirmed_boxes if positive else ()
                 # Only motion mode may reuse specifically paired Hub regions.
@@ -189,12 +207,18 @@ class EventOverlay:
                 boxes = self.tracker.update(image, self.localizer.locate(image),
                                             packet.timestamp, packet.seq, packet.source)
             if boxes:
-                annotated = image.copy()
-                for x, y, w, h in boxes:
-                    x0, y0 = max(0, int(x)), max(0, int(y))
-                    x1, y1 = min(width - 1, int(x + w - 1)), min(height - 1, int(y + h - 1))
-                    if x1 > x0 and y1 > y0:
-                        cv2.rectangle(annotated, (x0, y0), (x1, y1), self.color, 2)
+                if labeled:
+                    if self.label_renderer is None:
+                        from .event_labels import CategoryLabelRenderer
+                        self.label_renderer = CategoryLabelRenderer()
+                    annotated = self.label_renderer.render(image, self.tracker.last_detections)
+                else:
+                    annotated = image.copy()
+                    for x, y, w, h in boxes:
+                        x0, y0 = max(0, int(x)), max(0, int(y))
+                        x1, y1 = min(width - 1, int(x + w - 1)), min(height - 1, int(y + h - 1))
+                        if x1 > x0 and y1 > y0:
+                            cv2.rectangle(annotated, (x0, y0), (x1, y1), self.color, 2)
                 ok, encoded = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 if not ok:
                     raise ValueError("JPEG encode failed")

@@ -89,6 +89,9 @@ _DEFAULTS = {
         "min_area": 0.02,     # 前景轮廓占画面比例下限
     },
 
+    # Inert until explicit store application sets detect.mode to "market".
+    "algorithms": {"model_id": "nanodet-coco", "targets": ["person"], "confidence": 0.35},
+
     "record": {
         "root": "records",
         "keep_days": 7,

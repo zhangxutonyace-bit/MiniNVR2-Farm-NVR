@@ -55,10 +55,11 @@ $$('header nav button').forEach(function (b) {
   b.onclick = function () {
     $$('header nav button').forEach(function (x) { x.classList.remove('on'); });
     b.classList.add('on');
-    ['wall', 'cams', 'rec', 'set'].forEach(function (t) {
+    ['wall', 'cams', 'rec', 'alg', 'set'].forEach(function (t) {
       $('#tab-' + t).hidden = (t !== b.dataset.tab);
     });
     if (b.dataset.tab === 'rec') loadRecordings();   // 进入回放即刷新列表
+    if (b.dataset.tab === 'alg') loadAlgorithms();
   };
 });
 
@@ -101,7 +102,7 @@ function renderWall(cams) {
       ? '<span class="tag on">在线 ' + (c.fps || 0) + 'fps</span>'
       : (c.state === 'connecting' ? '<span class="tag warn">连接中</span>'
         : '<span class="tag off">离线</span>');
-    if (c.person) s += ' <span class="tag human">有人</span>';
+    if (c.person) s += ' <span class="tag human">检测到目标</span>';
     if (c.rec) s += ' <span class="tag warn">录像中</span>';
     if (box.html !== s) { box.html = s; box.st.innerHTML = s; }
   });
@@ -165,6 +166,7 @@ function renderCams(cams) {
     if (!c.enabled) s = '<span class="tag off">已停用</span>';
     if (c.error && c.enabled) s += '<div class="hint">' + esc(c.error) + '</div>';
     if (c.annotation_warning && c.enabled) s += '<div class="hint">⚠ ' + esc(c.annotation_warning) + '</div>';
+    if (c.algorithm_warning && c.enabled) s += '<div class="hint">⚠ ' + esc(c.algorithm_warning) + '</div>';
     if (r.html !== s) { r.html = s; r.st.innerHTML = s; }
     r.tog.textContent = c.enabled ? '停用' : '启用';
   });
@@ -327,6 +329,84 @@ $('#btnAdd').onclick = function () {
     });
 };
 
+/* ---------------- 算法商城 ---------------- */
+var algState = null, algBusy = false, algPollAt = 0;
+function selectedAlgorithm() {
+  var radio = document.querySelector('input[name="algModel"]:checked');
+  return radio ? radio.value : '';
+}
+function updateAlgorithmApply() {
+  var id = selectedAlgorithm();
+  $('#algApply').disabled = algBusy || !algState || !algState.installed[id] || !algState.installed[id].installed;
+}
+function loadAlgorithms(reset) {
+  return api('/api/algorithms').then(function (s) {
+    if (!s.ok) return;
+    var initial = !algState || reset;
+    algState = s;
+    var activeTargets = s.capabilities.filter(function (c) { return (s.active.targets || []).indexOf(c.id) >= 0; }).map(function (c) { return c.name; });
+    $('#algActive').textContent = s.active.mode === 'market'
+      ? '当前生效：' + (s.catalog.filter(function (m) { return m.id === s.active.model_id; })[0] || {}).name + '；目标：' + activeTargets.join('、') + '；置信度：' + s.active.confidence + '。下方修改后需点击“应用”才生效。'
+      : '当前使用旧版检测模式。下载和勾选不会改变录像，点击“应用”后才启用商城算法。';
+    if (s.configuration_error) $('#algActive').textContent = s.configuration_error + '；当前商城检测不可用。';
+    else if (s.active.mode === 'market' && (!s.installed[s.active.model_id] || !s.installed[s.active.model_id].installed)) {
+      $('#algActive').textContent = '当前模型不可用，请重新下载并应用；不会自动换成其他识别类别。';
+    }
+    if (initial) {
+      $('#algModels').innerHTML = s.catalog.map(function (m) {
+        return '<div class="card" style="margin-top:12px"><label><input type="radio" name="algModel" value="' + esc(m.id) + '"' +
+          (m.id === s.active.model_id ? ' checked' : '') + '> <strong>' + esc(m.name) + '</strong> · ' + (m.bytes / 1048576).toFixed(2) + ' MB · Apache-2.0</label>' +
+          '<div class="hint">' + esc(m.note) + ' <span id="algInstalled-' + esc(m.id) + '"></span></div>' +
+          (m.bundled ? '' : '<button class="line algDownloadBtn" data-model="' + esc(m.id) + '">下载 / 重新下载</button>') +
+          '<details class="hint"><summary>官方来源与文件校验</summary><a target="_blank" rel="noopener noreferrer" href="' + esc(m.source) + '">官方来源</a> · ' +
+          '<a target="_blank" rel="noopener noreferrer" href="' + esc(m.license_url) + '">许可证</a><div style="overflow-wrap:anywhere">SHA-256：' + esc(m.sha256) + '</div></details></div>';
+      }).join('');
+      $('#algTargets').innerHTML = s.capabilities.map(function (c) {
+        var colors = (c.styles || []).map(function (style) {
+          return '<span style="display:inline-block;width:11px;height:11px;margin-right:3px;border:1px solid #777;background:' + esc(style.color) +
+            '" role="img" aria-label="' + esc(style.label + ' ' + style.color) + '" title="' + esc(style.label + ' ' + style.color) + '"></span>';
+        }).join('');
+        return '<label><input type="checkbox" name="algTarget" value="' + esc(c.id) + '"' +
+          (Array.isArray(s.active.targets) && s.active.targets.indexOf(c.id) >= 0 ? ' checked' : '') + '> ' + colors + esc(c.name) + '</label>';
+      }).join('');
+      $('#algConfidence').value = s.active.confidence == null ? .35 : s.active.confidence;
+      $$('input[name="algModel"]').forEach(function (el) { el.onchange = updateAlgorithmApply; });
+      $$('.algDownloadBtn').forEach(function (button) {
+        button.onclick = function () {
+          api('/api/algorithms/download', { method: 'POST', json: { model_id: button.dataset.model } }).then(function (r) {
+            toast(r.ok ? '开始下载；下载不会自动启用' : r.msg, !r.ok); loadAlgorithms();
+          });
+        };
+      });
+    }
+    s.catalog.forEach(function (m) {
+      var state = s.installed[m.id];
+      $('#algInstalled-' + m.id).textContent = state.installed ? '已就绪' : (state.error || '尚未下载');
+    });
+    var job = s.download, running = job.state === 'downloading' || job.state === 'validating';
+    var names = { idle: '', downloading: '正在下载', validating: '已下载，正在校验兼容性', complete: '下载完成，请选择并应用', cancelled: '下载已取消', error: '下载失败' };
+    $('#algDownload').textContent = (names[job.state] || '') + (running ? ' · ' + (job.received / 1048576).toFixed(2) + ' / ' + (job.total / 1048576).toFixed(2) + ' MB' : '') + (job.error ? ' · ' + job.error : '');
+    $('#algCancel').hidden = !running;
+    $('#algProgress').hidden = !running;
+    $('#algProgress').max = job.total || 1; $('#algProgress').value = job.received || 0;
+    $$('.algDownloadBtn').forEach(function (button) { button.disabled = running; });
+    updateAlgorithmApply();
+  }).catch(function () { $('#algResult').textContent = '无法读取算法商城，请稍后重试。'; });
+}
+$('#algCancel').onclick = function () {
+  api('/api/algorithms/cancel', { method: 'POST', json: {} }).then(function () { loadAlgorithms(); });
+};
+$('#algApply').onclick = function () {
+  var targets = $$('input[name="algTarget"]:checked').map(function (el) { return el.value; });
+  if (!targets.length) { toast('请至少勾选一个识别目标', true); return; }
+  algBusy = true; updateAlgorithmApply(); $('#algResult').textContent = '正在检查模型并应用，当前录像会先保存结束…';
+  api('/api/algorithms/apply', { method: 'POST', json: { model_id: selectedAlgorithm(), targets: targets, confidence: +$('#algConfidence').value } }).then(function (r) {
+    $('#algResult').textContent = r.ok ? '已应用。请确认“设置”启用检测，摄像头“参与检测”已打开。新事件可在回放和微信中查看。' : r.msg;
+    if (r.ok) { loadAlgorithms(true); api('/api/settings').then(fillSettings); }
+  }).catch(function () { $('#algResult').textContent = '应用未完成，请查看当前算法状态并重试。';
+  }).finally(function () { algBusy = false; updateAlgorithmApply(); });
+};
+
 /* ---------------- 设置 ---------------- */
 function fillSettings(s) {
   if (!s) return;
@@ -337,8 +417,8 @@ function fillSettings(s) {
   $('#stTransport').value = st.transport || 'tcp'; $('#stRetry').value = st.retry_sec;
   $('#dtEn').checked = !!dt.enabled; $('#dtMode').value = dt.mode || 'auto';
   $('#localDetectHint').textContent = dt.enabled
-    ? '沿用现有检测设置与事件录像规则；请确认下方这路摄像头“识别人”开关已打开。'
-    : '全局人形检测已关闭：仍可预览和抽帧，但不会触发事件录像。请到“设置”启用检测。';
+    ? '沿用当前检测设置与事件录像规则；请确认这路摄像头“参与检测”开关已打开。'
+    : '全局检测已关闭：仍可预览和抽帧，但不会触发事件录像。请到“设置”启用检测。';
   $('#dtInt').value = dt.interval; $('#dtConfirm').value = dt.confirm;
   $('#dtGone').value = dt.gone_sec;
   $('#rdTl').value = rd.timelapse_sec; $('#rdKeep').value = rd.keep_days;
@@ -516,6 +596,9 @@ $('#btnQuit').onclick = function () {
 /* ---------------- 轮询 ---------------- */
 var cbSettingsPollAt = 0;
 function tick() {
+  if (!document.hidden && !$('#tab-alg').hidden && Date.now() - algPollAt > 2000) {
+    algPollAt = Date.now(); loadAlgorithms();
+  }
   if (!document.hidden && !$('#tab-set').hidden && !cbTimer &&
       Date.now() - cbSettingsPollAt >= 5000) {
     cbSettingsPollAt = Date.now();
@@ -525,8 +608,8 @@ function tick() {
   }
   api('/api/status').then(function (s) {
     $('#localDetectHint').textContent = s.detection_enabled
-      ? '沿用现有检测设置与事件录像规则；请确认下方这路摄像头“识别人”开关已打开。'
-      : '全局人形检测已关闭：仍可预览和抽帧，但不会触发事件录像。请到“设置”启用检测。';
+      ? '沿用当前检测设置与事件录像规则；请确认这路摄像头“参与检测”开关已打开。'
+      : '全局检测已关闭：仍可预览和抽帧，但不会触发事件录像。请到“设置”启用检测。';
     renderWall(s.cams || []);
     var list = s.cams || [];
     if (!$('#tab-cams').hidden) renderCams(list);

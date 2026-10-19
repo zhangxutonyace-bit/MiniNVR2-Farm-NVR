@@ -598,7 +598,7 @@ class BurnedVideoTests(OfflineTestCase):
         self.wait_until(lambda: camera._jpeg_recorder.frames >= 3)
         part = Path(camera.rec_path)
         retained = []
-        def timeout_validation(path):
+        def timeout_validation(path, **kwargs):
             retained.append(Path(path).read_bytes())
             return ffmpeg.validate_video(path)
         with mock.patch("nvr.camera.validate_video", side_effect=timeout_validation), \

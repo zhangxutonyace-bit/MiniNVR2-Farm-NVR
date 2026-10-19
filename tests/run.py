@@ -17,11 +17,13 @@ def main(group="all"):
         "local": ("tests.test_local_camera",),
         "overlay": ("tests.test_event_overlay", "tests.test_target_tracking"),
         "tracking": ("tests.test_target_tracking",),
+        "algorithms": ("tests.test_algorithm_store", "tests.test_algorithms", "tests.test_event_labels"),
         "all": ("tests.test_media", "tests.test_api", "tests.test_integrations",
                 "tests.test_clawbot_events", "tests.test_preview", "tests.test_lifecycle",
                 "tests.test_remote_viewer", "tests.test_remote_preview", "tests.test_remote_integration",
                 "tests.test_remote_bridge", "tests.test_local_camera", "tests.test_event_overlay",
-                "tests.test_target_tracking"),
+                "tests.test_target_tracking", "tests.test_algorithm_store", "tests.test_algorithms",
+                "tests.test_event_labels"),
     }
     if group not in groups:
         raise SystemExit("Choose: all, media, api, integrations, events, preview, lifecycle, overlay, tracking")

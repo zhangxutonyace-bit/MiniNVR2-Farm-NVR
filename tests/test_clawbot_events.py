@@ -89,13 +89,48 @@ class ClawBotEventTests(EventFixture):
 
     def test_relative_dates_and_camera_name_select_correct_events(self):
         previous = (datetime.date.today() - datetime.timedelta(days=2)).isoformat()
-        for day, word in ((self.today, "今天"), (self.yesterday, "昨天"), (previous, "前天")):
+        for day, word in ((self.today, "今天"), (self.today, "今日"),
+                          (self.yesterday, "昨天"), (previous, "前天")):
             selected = self.event(cid="coop", day=day)
             self.event(day=day)
             with self.subTest(word=word), \
                  mock.patch.object(self.bot, "send_video", return_value=True) as video:
                 self.request(word + "事件 鸡舍 第1段")
             self.assert_sent_path(video, selected)
+
+    def test_today_synonym_lists_same_completed_events_and_keeps_camera_snapshot(self):
+        self.event()
+        selected = self.event(cid="coop")
+        self.event(day=self.yesterday)
+        self.event(cid="disabled")
+        with mock.patch.object(self.bot, "send_video", return_value=True) as video:
+            self.request("今天事件")
+            expected = list(self.bot._event_lists[self.owner]["items"])
+            self.request("今日事件")
+            self.assertEqual(self.bot._event_lists[self.owner]["items"], expected)
+            self.assertEqual({item["cam"] for item in expected}, {"farm", "coop"})
+            video.assert_not_called()
+            self.request("今日事件 2号摄像头")
+            self.request("播放第一条")
+            self.assert_sent_path(video, selected)
+        self.assertIn("今日事件", self.bot.HELP)
+
+    def test_today_synonym_does_not_bypass_authorization_or_guess_camera_and_date(self):
+        self.event()
+        for command, changes in (("今日事件", {"peer": "stranger"}),
+                                 ("今日事件", {"ctx": ""}),
+                                 ("今日事件 不存在的摄像头", {}),
+                                 ("今日事件 99号", {}),
+                                 ("今日事件 昨天", {}),
+                                 ("今日事件 " + self.today, {})):
+            with self.subTest(command=command, changes=changes), \
+                 mock.patch("nvr.clawbot.list_events") as query, \
+                 mock.patch.object(self.bot, "send_video") as video:
+                self.bot._event_lists.clear()
+                self.request(command, **changes)
+                query.assert_not_called()
+                video.assert_not_called()
+                self.assertFalse(self.bot._event_lists)
 
     def test_invalid_dates_cameras_and_indices_never_fall_back(self):
         self.event()
