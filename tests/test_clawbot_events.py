@@ -186,6 +186,114 @@ class ClawBotEventTests(EventFixture):
                 self.assert_sent_path(video, selected)
                 self.assertEqual(video.call_args.args[:2], (peer, self.context))
 
+    def test_chinese_playback_and_event_suffix_use_the_same_selected_snapshot(self):
+        selected = self.event(cid="coop", day=self.yesterday)
+        self.event(cid="coop")
+        self.event()
+        self.event(day=self.yesterday)
+        commands = ("播放第一条", "播放第一段", "播放第一条事件", "播放第一段事件录像",
+                    "播放第1条事件", "播放第1段事件录像", "播放 第 一 条 事件录像")
+        for command in commands:
+            with self.subTest(command=command), \
+                 mock.patch.object(self.bot, "send_video", return_value=True) as video:
+                self.request("昨天事件 鸡舍")
+                snapshot = self.bot._event_lists[self.owner]
+                self.request(command)
+                self.assert_sent_path(video, selected)
+                self.assertIs(self.bot._event_lists[self.owner], snapshot)
+                self.assertEqual(snapshot["day"], self.yesterday)
+                self.assertEqual(snapshot["camera"], "鸡舍")
+
+    def test_canonical_chinese_ordinals_cover_event_list_boundaries(self):
+        cases = {"一": 1, "九": 9, "十": 10, "十一": 11, "二十": 20, "二十一": 21,
+                 "九十九": 99, "一百": 100, "一百零一": 101, "一百一十": 110,
+                 "一百一十一": 111, "一百九十九": 199, "二百": 200, "二百零五": 205,
+                 "二百一十": 210, "四百九十九": 499, "五百": 500,
+                 "五百零一": 501, "九百九十九": 999}
+        for token, expected in cases.items():
+            with self.subTest(token=token):
+                self.assertEqual(self.bot._event_ordinal(token), expected)
+
+    def test_invalid_playback_ordinals_never_query_or_send_another_event(self):
+        self.event(cid="coop", day=self.yesterday)
+        self.event()
+        self.request("昨天事件 鸡舍")
+        snapshot = self.bot._event_lists[self.owner]
+        commands = ("播放第零条", "播放第0条事件", "播放第-1段事件录像", "播放第二条",
+                    "播放第999条事件", "播放第五百零一条", "播放第十一一条", "播放第一百一条",
+                    "播放第一百零十条事件", "播放第十百段事件录像", "播放第1条第2条事件",
+                    "播放第一条第二条", "播放第一条 第2条事件", "播放第1条和第一条事件")
+        with mock.patch("nvr.clawbot.list_events") as query, \
+             mock.patch.object(self.bot, "_timelapse") as daily, \
+             mock.patch.object(self.bot, "send_video") as video:
+            for command in commands:
+                with self.subTest(command=command):
+                    self.texts.reset_mock()
+                    self.request(command)
+                    self.assertTrue(self.text())
+                    self.assertIs(self.bot._event_lists[self.owner], snapshot)
+            query.assert_not_called()
+            daily.assert_not_called()
+            video.assert_not_called()
+
+    def test_chinese_playback_is_isolated_and_requires_authorization_and_context(self):
+        farm = self.event(day=self.yesterday)
+        coop = self.event(cid="coop")
+        self.request("昨天事件 农场")
+        self.request("今天事件 鸡舍", peer="fixture-helper")
+        snapshots = dict(self.bot._event_lists)
+        for peer, selected in ((self.owner, farm), ("fixture-helper", coop)):
+            with self.subTest(peer=peer), \
+                 mock.patch.object(self.bot, "send_video", return_value=True) as video:
+                self.request("播放第一条事件录像", peer=peer)
+                self.assert_sent_path(video, selected)
+                self.assertEqual(video.call_args.args[:2], (peer, self.context))
+        for changes in ({"peer": "stranger"}, {"ctx": ""}, {"message_type": 2}):
+            with self.subTest(changes=changes), \
+                 mock.patch.object(self.bot, "send_video") as video:
+                self.texts.reset_mock()
+                self.request("播放第一条", **changes)
+                self.texts.assert_not_called()
+                video.assert_not_called()
+                self.assertEqual(self.bot._event_lists, snapshots)
+
+    def test_chinese_playback_with_missing_or_expired_snapshot_never_requeries(self):
+        self.event()
+        # Another user's current list must not fill in a missing owner list.
+        self.request("今天事件", peer="fixture-helper")
+        with mock.patch("nvr.clawbot.list_events") as query, \
+             mock.patch.object(self.bot, "send_video") as video:
+            for command in ("播放第一条", "播放第1条事件", "播放第一段事件录像"):
+                self.request(command)
+            self.assertNotIn(self.owner, self.bot._event_lists)
+            query.assert_not_called()
+            video.assert_not_called()
+        with mock.patch("nvr.clawbot.time.time", return_value=10000):
+            self.request("今天事件")
+        with mock.patch("nvr.clawbot.time.time", return_value=10901), \
+             mock.patch("nvr.clawbot.list_events") as query, \
+             mock.patch.object(self.bot, "send_video") as video:
+            for command in ("播放第一条", "播放第1条事件", "播放第一段事件录像"):
+                self.request(command)
+            query.assert_not_called()
+            video.assert_not_called()
+        self.assertIn("列表已过期", self.text())
+
+    def test_chinese_ordinal_camera_names_are_preserved_in_queries(self):
+        self.cfg.upsert_camera({"id": "named", "name": "第一条仓库", "url": "fixture.mp4"})
+        selected = self.event(cid="named", day=self.yesterday)
+        self.event(day=self.yesterday)
+        with mock.patch.object(self.bot, "send_video", return_value=True) as video:
+            self.request("昨天事件 第一条仓库 第1条")
+            self.assert_sent_path(video, selected)
+        with mock.patch.object(self.bot, "send_video", return_value=True) as video:
+            self.request("播放第一条")
+            self.assert_sent_path(video, selected)
+        with mock.patch.object(self.bot, "_timelapse", return_value=str(selected)) as daily, \
+             mock.patch.object(self.bot, "send_video", return_value=True):
+            self.request("昨天 第一条仓库")
+            daily.assert_called_once_with("named", self.yesterday)
+
     def test_missing_and_expired_snapshot_never_send(self):
         self.event()
         with mock.patch.object(self.bot, "send_video") as video:
@@ -406,6 +514,10 @@ class ClawBotEventTests(EventFixture):
         self.assertTrue(snapshot["truncated"])
         self.assertEqual(snapshot["items"][0]["name"], "120000_500.mp4")
         self.assertNotIn("120000_0.mp4", [row["name"] for row in snapshot["items"]])
+        with mock.patch.object(self.bot, "send_video", return_value=True) as video:
+            self.request("播放第五百条事件录像")
+            self.assert_sent_path(video, self.root / "records" / "farm" / self.today /
+                                  "event" / "120000_1.mp4")
 
     def test_peer_snapshot_cache_is_bounded(self):
         self.event()

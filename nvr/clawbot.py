@@ -511,7 +511,7 @@ class ClawBot(threading.Thread):
         "· 事件 2026-10-18 1号 —— 指定日期和摄像头\n"
         "· 最新事件 [日期/摄像头] —— 发最新一段（默认今天）\n"
         "· 今天事件 第2条 —— 查询后直接发第2段\n"
-        "· 播放第2条 / 播放第2段 —— 按本人最近列表取回一段\n"
+        "· 播放第一条 / 播放第2段 —— 按本人最近列表取回一段\n"
         "· 下一页 / 上一页 —— 每页10条，序号固定，列表15分钟有效\n"
         "· 昨天 —— 发昨天的全天抽帧录像（约 2 分钟）\n"
         "· 前天 / 2026-09-26 —— 指定某一天\n"
@@ -595,6 +595,33 @@ class ClawBot(threading.Thread):
     EVENT_MAX_USERS = 64
     EVENT_MAX_ITEMS = 500
 
+    @staticmethod
+    def _event_ordinal(token):
+        """Parse a playback ordinal, without rewriting dates or camera names."""
+        if re.fullmatch(r"-?\d{1,32}", token):
+            return int(token)
+        digits = {word: value for value, word in enumerate("一二三四五六七八九", 1)}
+        if token in digits:
+            return digits[token]
+        if token == "十":
+            return 10
+        if len(token) == 2 and token[0] == "十" and token[1] in digits:
+            return 10 + digits[token[1]]
+        # Require canonical forms, e.g. 一百零一 / 一百一十; do not guess
+        # ambiguous shorthand such as 一百一 or malformed repeated units.
+        hundreds = 0
+        if len(token) >= 2 and token[0] in digits and token[1] == "百":
+            hundreds = digits[token[0]] * 100
+            token = token[2:]
+            if not token:
+                return hundreds
+            if len(token) == 2 and token[0] == "零" and token[1] in digits:
+                return hundreds + digits[token[1]]
+        if (len(token) in (2, 3) and token[0] in digits and token[1] == "十"
+                and (len(token) == 2 or token[2] in digits)):
+            return hundreds + digits[token[0]] * 10 + (digits[token[2]] if len(token) == 3 else 0)
+        return None
+
     def _event_snapshot(self, to):
         now = time.time()
         with self._lock:
@@ -663,13 +690,19 @@ class ClawBot(threading.Thread):
             if self._event_page(to, ctx, snapshot, page=page):
                 snapshot["page"] = page
             return True
-        play = re.fullmatch(r"播放\s*第\s*(-?\d+)\s*(?:条|段)", text)
+        # Only an independent playback command uses the user's saved list.
+        # Query commands with a date/camera keep their existing selection rules.
+        play = re.fullmatch(r"播放\s*第\s*(\S+?)\s*(?:条|段)(?:\s*事件(?:录像)?)?", text)
         if play:
+            index = self._event_ordinal(play.group(1))
+            if index is None:
+                self.send_text(to, ctx, "事件序号无效，请发送“播放第一条”或“播放第1条”。")
+                return True
             snapshot = self._event_snapshot(to)
             if not snapshot:
                 self.send_text(to, ctx, "没有有效事件列表或列表已过期，请先发送“今天事件”。")
             else:
-                self._play_event(to, ctx, snapshot, int(play.group(1)))
+                self._play_event(to, ctx, snapshot, index)
             return True
         if "事件" not in text:
             return False
