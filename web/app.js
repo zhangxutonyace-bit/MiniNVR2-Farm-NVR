@@ -374,6 +374,7 @@ function refreshClawbot() {
     } else {
       txt = '未登录，点「扫码登录」开始';
     }
+    if (d.logged && d.error) txt += '；⚠️ ' + d.error;
     $('#cbState').textContent = txt;
     if (d.qr_url) {
       $('#cbBox').style.display = '';
@@ -421,7 +422,14 @@ $('#btnQuit').onclick = function () {
 };
 
 /* ---------------- 轮询 ---------------- */
+var cbSettingsPollAt = 0;
 function tick() {
+  if (!document.hidden && !$('#tab-set').hidden && !cbTimer &&
+      Date.now() - cbSettingsPollAt >= 5000) {
+    cbSettingsPollAt = Date.now();
+    refreshClawbot();
+    refreshPreview();
+  }
   api('/api/status').then(function (s) {
     renderWall(s.cams || []);
     var list = s.cams || [];

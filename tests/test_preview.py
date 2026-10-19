@@ -112,6 +112,150 @@ class ClawBotPreviewTests(OfflineTestCase):
         self.bot.send_video.assert_not_called()
 
 
+class ClawBotTextReceiptTests(OfflineTestCase):
+    """Exercise the real text sender without contacting WeChat."""
+
+    secret = "fixturesecret"
+
+    def setUp(self):
+        super().setUp()
+        self.owner = self.secret + "-owner"
+        self.context = self.secret + "-context"
+        self.cfg.set("clawbot", "enabled", True, save=False)
+        self.cfg.set("clawbot", "user_id", self.owner, save=False)
+        self.cfg.set("clawbot", "token", self.secret + "-bot-token", save=False)
+        self.cfg.upsert_camera({"id": "farm", "name": self.secret + "-camera",
+                                "url": "fixture.mp4", "enabled": True})
+        self.link = "http://192.168.1.10:8803/preview#t=" + self.secret
+        self.logs = []
+        self.bot = ClawBot(self.cfg,
+                           hub=SimpleNamespace(preview_link=mock.Mock(return_value=self.link)),
+                           log=self.logs.append)
+        self.bot._typing = mock.Mock()
+
+    def request(self, command="预览1号"):
+        self.bot.on_message({"message_type": 1, "from_user_id": self.owner,
+                             "context_token": self.context,
+                             "item_list": [{"type": 1, "text_item": {"text": command}}]})
+
+    def assert_private_values_not_logged(self):
+        output = "\n".join(self.logs)
+        self.assertNotIn(self.secret, output)
+        self.assertNotIn(self.link, output)
+        self.assertNotIn(self.owner, output)
+        self.assertNotIn(self.context, output)
+
+    def test_preview_accepted_and_omitted_zero_receipts_are_logged(self):
+        for result in ({}, {"ret": 0}, {"errcode": "0"},
+                       {"ret": "0", "errcode": 0, "errmsg": self.secret}):
+            with self.subTest(result=result):
+                self.logs.clear()
+                with mock.patch.object(self.bot, "_post", return_value=result) as post:
+                    self.request()
+                post.assert_called_once()
+                self.assertEqual(post.call_args.args[0], "sendmessage")
+                sent = post.call_args.args[1]["msg"]
+                self.assertEqual(sent["context_token"], self.context)
+                self.assertIn(self.link, sent["item_list"][0]["text_item"]["text"])
+                self.assertIn("微信接口已接受文字回复（不代表手机已送达）", self.logs[-1])
+                self.assert_private_values_not_logged()
+
+    def test_preview_rejected_and_malformed_receipts_are_logged_without_secrets(self):
+        cases = (({"ret": 7, "errmsg": self.secret}, "ret=7，errcode=invalid"),
+                 ({"ret": 0, "errcode": "-14", "errmsg": self.link}, "ret=0，errcode=-14"),
+                 ({"ret": None}, "ret=invalid，errcode=invalid"),
+                 ({"ret": False}, "ret=invalid，errcode=invalid"),
+                 ({"ret": self.secret}, "ret=invalid，errcode=invalid"),
+                 ({"ret": "7\n" + self.secret}, "ret=invalid，errcode=invalid"),
+                 ({"errcode": "１２"}, "ret=invalid，errcode=invalid"),
+                 ({"ret": 2147483648}, "ret=invalid，errcode=invalid"),
+                 ({"errcode": "1" * 100}, "ret=invalid，errcode=invalid"),
+                 ([], "ret=invalid，errcode=invalid"),
+                 (None, "ret=invalid，errcode=invalid"),
+                 (self.secret, "ret=invalid，errcode=invalid"))
+        for result, codes in cases:
+            with self.subTest(result=result):
+                self.logs.clear()
+                with mock.patch.object(self.bot, "_post", return_value=result) as post:
+                    self.request()
+                post.assert_called_once()
+                self.assertIn("微信接口未接受文字回复（" + codes + "）", self.logs[-1])
+                self.assertNotIn("微信接口已接受", "\n".join(self.logs))
+                self.assertEqual(self.bot.state, "idle")
+                self.assertIn("微信文字回复发送失败", self.bot.error)
+                self.assert_private_values_not_logged()
+
+    def test_text_sender_preserves_receipt_object_for_event_pagination(self):
+        for result in ({"ret": 0}, {"ret": 7}, {"errcode": None}, []):
+            with self.subTest(result=result):
+                with mock.patch.object(self.bot, "_post", return_value=result):
+                    self.assertIs(self.bot.send_text(self.owner, self.context, self.secret), result)
+                self.assert_private_values_not_logged()
+
+    def test_all_text_commands_share_receipt_logging(self):
+        for command in ("帮助", "列表", "预览", "预览99号", "预览1号"):
+            with self.subTest(command=command):
+                self.logs.clear()
+                with mock.patch.object(self.bot, "_post", return_value={"errcode": 9}) as post:
+                    self.request(command)
+                post.assert_called_once()
+                self.assertIn("微信接口未接受文字回复", self.logs[-1])
+                self.assert_private_values_not_logged()
+
+    def test_non_json_http_response_is_a_visible_text_rejection(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = ("not JSON " + self.secret).encode()
+        with mock.patch("urllib.request.urlopen", return_value=response) as transport:
+            self.request()
+        transport.assert_called_once()
+        self.assertIn("微信接口未接受文字回复（ret=-1，errcode=invalid）", self.logs[-1])
+        self.assert_private_values_not_logged()
+
+    def test_text_transport_exception_logs_type_and_propagates(self):
+        failure = OSError(self.link + " " + self.context + " " + self.secret)
+        with mock.patch.object(self.bot, "_post", side_effect=failure) as post:
+            with self.assertRaises(OSError) as raised:
+                self.request()
+        self.assertIs(raised.exception, failure)
+        post.assert_called_once()
+        self.assertIn("文字回复发送异常（OSError）", self.logs[-1])
+        self.assertNotIn("微信接口已接受", "\n".join(self.logs))
+        self.assertIn("微信文字回复发送失败", self.bot.error)
+        self.assert_private_values_not_logged()
+
+    def test_success_clears_only_prior_text_reply_error(self):
+        with mock.patch.object(self.bot, "_post", return_value={"ret": 7}):
+            self.request()
+        self.assertTrue(self.bot.error)
+        with mock.patch.object(self.bot, "_post", return_value={"ret": 0}):
+            self.request()
+        self.assertEqual(self.bot.error, "")
+        self.bot.error = "unrelated fixture error"
+        with mock.patch.object(self.bot, "_post", return_value={}):
+            self.request()
+        self.assertEqual(self.bot.error, "unrelated fixture error")
+
+    def test_polling_handler_does_not_log_exception_message(self):
+        received = []
+
+        def post(endpoint, body, **kwargs):
+            if endpoint == "getupdates":
+                if received:
+                    self.bot.stop()
+                    return {"ret": 0}
+                received.append(True)
+                return {"ret": 0, "msgs": [{"message_type": 1,
+                    "from_user_id": self.owner, "context_token": self.context,
+                    "item_list": [{"type": 1, "text_item": {"text": "预览1号"}}]}]}
+            raise OSError(self.link + " " + self.context + " " + self.secret)
+
+        with mock.patch.object(self.bot, "_post", side_effect=post) as transport:
+            self.bot.run()
+        self.assertEqual(transport.call_count, 3)
+        self.assertIn("处理消息异常（OSError）", "\n".join(self.logs))
+        self.assert_private_values_not_logged()
+
+
 class PreviewServiceTests(OfflineTestCase):
     """Use the real Flask routes with a mocked listener and isolated config."""
 

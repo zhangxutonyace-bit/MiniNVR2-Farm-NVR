@@ -288,13 +288,14 @@ class ClawBot(threading.Thread):
                 try:
                     self.on_message(m)
                 except Exception as e:
-                    self.log("[clawbot] 处理消息异常：%s" % e)
+                    self.log("[clawbot] 处理消息异常（%s）" % type(e).__name__)
         self._running = False
         self.log("[clawbot] 已停止接收")
 
     # ---------------- 收发 ----------------
 
     def send_text(self, to, ctx, text):
+        failure_message = "微信文字回复发送失败，请查看程序日志中的接口返回码或异常类型。"
         body = {"msg": {
             "from_user_id": "",
             "to_user_id": to,
@@ -304,7 +305,31 @@ class ClawBot(threading.Thread):
             "context_token": ctx,
             "item_list": [{"type": ITEM_TEXT, "text_item": {"text": text}}],
         }}
-        return self._post("sendmessage", body, timeout=20)
+        try:
+            response = self._post("sendmessage", body, timeout=20)
+        except Exception as exc:
+            # Exception messages may contain URLs, account or context tokens.
+            self.error = failure_message
+            self.log("[clawbot] 文字回复发送异常（%s）" % type(exc).__name__)
+            raise
+        if self._response_ok(response):
+            if self.error == failure_message:
+                self.error = ""
+            self.log("[clawbot] 微信接口已接受文字回复（不代表手机已送达）")
+        else:
+            def safe_code(field):
+                value = response.get(field) if isinstance(response, dict) else None
+                if type(value) is int and -2147483648 <= value <= 2147483647:
+                    return str(value)
+                if (type(value) is str and re.fullmatch(r"-?[0-9]{1,10}", value)
+                        and -2147483648 <= int(value) <= 2147483647):
+                    return value
+                return "invalid"
+
+            self.error = failure_message
+            self.log("[clawbot] 微信接口未接受文字回复（ret=%s，errcode=%s）"
+                     % (safe_code("ret"), safe_code("errcode")))
+        return response
 
     def _typing(self, to, on=True):
         try:
@@ -753,6 +778,7 @@ class ClawBot(threading.Thread):
         match = re.match(r"^(?:查看实时预览|实时预览|查看预览|预览)(.*)$", text)
         if not match:
             return False
+        self.log("[clawbot] 已匹配预览指令")
         selector = match.group(1).strip(" \t\r\n，,。:：")
         cameras = self._cameras()
         if not cameras:
@@ -792,6 +818,7 @@ class ClawBot(threading.Thread):
         except ValueError as exc:
             self.send_text(to, ctx, "暂时不能生成预览链接：%s" % exc)
             return True
+        self.log("[clawbot] 已生成单路预览链接（10分钟有效）")
         self.send_text(to, ctx, "%s 实时预览\n手机和电脑须连接同一Wi-Fi，链接10分钟有效，请勿转发。\n%s"
                        % (camera.get("name") or camera["id"], link))
         return True
