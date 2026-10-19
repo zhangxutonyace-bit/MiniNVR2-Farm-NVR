@@ -98,7 +98,7 @@ The NetBird process exposes a dynamically allocated bridge port bound only to it
 
 - User authorized official NetBird installation, personally completed login, and confirmed the desktop client connected. The account permits Peer Expose only for a dedicated group containing this PC.
 - User then explicitly authorized a temporary synthetic-image relay. The installed v2.3.0 EXE above created the real HTTPS origin. Ten unauthenticated public-path checks passed; HTML/JS matched the candidate byte-for-byte.
-- During the requested mobile-data test (phone Wi-Fi off), user sent `预览 外网测试画面` and confirmed that a fresh link opened a continuously updating picture in WeChat. No extra phone app was used. This is real provider/phone acceptance with synthetic footage, not real-camera or long-duration acceptance.
+- During the requested mobile-data test (phone Wi-Fi off), user sent `预览 外网测试画面` and confirmed that a fresh link opened a continuously updating picture. The user later clarified that the URL must be copied into a browser app: direct tapping inside the WeChat chat and WeChat's embedded browser are NOT_VERIFIED. No NetBird/VPN phone app was installed. This is real provider/phone-browser acceptance with synthetic footage, not real-camera or long-duration acceptance.
 - An earlier link displayed a generic invalid/expired heading. Its detailed status was not captured; the original cause remains unknown. Requesting a fresh link immediately succeeded without software or permission changes.
 - Evidence is bound to the installed candidate EXE in ignored `validation-local/live-remote-preview-v2.3.0.json`. Public release remains v2.2.3; no push or release was performed in this acceptance step.
 

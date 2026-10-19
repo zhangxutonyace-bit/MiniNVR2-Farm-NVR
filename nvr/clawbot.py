@@ -819,9 +819,7 @@ class ClawBot(threading.Thread):
             self.send_text(to, ctx, "暂时不能生成预览链接：%s" % exc)
             return True
         self.log("[clawbot] 已生成单路预览链接（10分钟有效）")
-        remote = self.cfg.get("remote_preview", "enabled", default=False)
-        network = ("远程预览：手机可使用移动网络或其他Wi-Fi，电脑需保持运行和联网。"
-                   if remote else "手机和电脑须连接同一Wi-Fi。")
-        self.send_text(to, ctx, "%s 实时预览\n%s链接10分钟有效，请勿转发。\n%s"
-                       % (camera.get("name") or camera["id"], network, link))
+        # Let the phone recognize the complete URL as one standalone text item.
+        # Do not wrap it in Markdown/HTML or alter its authorization fragment.
+        self.send_text(to, ctx, link)
         return True

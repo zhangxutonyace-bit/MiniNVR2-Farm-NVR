@@ -329,6 +329,9 @@ def check(executable=None):
                     assert not state.errors, "Fake iLink rejected a request"
                     assert len(state.links) == 1, "Expected one camera preview link"
                     link = state.links[0]
+                    assert len(state.messages) == 1 and state.messages[0]["item_list"] == [
+                        {"type": 1, "text_item": {"text": link}}], \
+                        "Preview reply must be one complete URL without extra text or markup"
                     assert "getupdates" in state.calls and "sendmessage" in state.calls
                 _approved_url(link, {lan_address: {preview_port}}, fragment=True)
                 parsed = urllib.parse.urlsplit(link)

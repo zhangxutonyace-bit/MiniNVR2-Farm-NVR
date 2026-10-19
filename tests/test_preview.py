@@ -55,7 +55,7 @@ class ClawBotPreviewTests(OfflineTestCase):
                 self.reset()
                 self.request(command)
                 self.hub.preview_link.assert_called_once_with(camera_id)
-                self.assertIn(self.link, self.text().splitlines())
+                self.texts.assert_called_once_with(self.owner, self.context, self.link)
                 self.bot.send_video.assert_not_called()
                 self.bot._timelapse.assert_not_called()
 
@@ -111,16 +111,13 @@ class ClawBotPreviewTests(OfflineTestCase):
         self.assertNotIn(self.link, self.text())
         self.bot.send_video.assert_not_called()
 
-    def test_remote_reply_contains_https_link_and_external_network_instructions(self):
+    def test_remote_reply_is_one_unmodified_https_url_without_markup_or_caption(self):
         self.cfg.set("remote_preview", "enabled", True, save=False)
         link = "https://fixture.example/preview#t=fixture-only-ticket"
         self.hub.preview_link.return_value = link
         self.request("预览1号")
         self.hub.preview_link.assert_called_once_with("farm")
-        self.assertIn(link, self.text().splitlines())
-        self.assertIn("移动网络", self.text())
-        self.assertNotIn("须连接同一", self.text())
-        self.assertIn("10分钟", self.text())
+        self.texts.assert_called_once_with(self.owner, self.context, link)
 
     def test_remote_failure_explains_recovery_without_returning_a_lan_link(self):
         self.cfg.set("remote_preview", "enabled", True, save=False)
@@ -175,7 +172,7 @@ class ClawBotTextReceiptTests(OfflineTestCase):
                 self.assertEqual(post.call_args.args[0], "sendmessage")
                 sent = post.call_args.args[1]["msg"]
                 self.assertEqual(sent["context_token"], self.context)
-                self.assertIn(self.link, sent["item_list"][0]["text_item"]["text"])
+                self.assertEqual(sent["item_list"], [{"type": 1, "text_item": {"text": self.link}}])
                 self.assertIn("微信接口已接受文字回复（不代表手机已送达）", self.logs[-1])
                 self.assert_private_values_not_logged()
 
