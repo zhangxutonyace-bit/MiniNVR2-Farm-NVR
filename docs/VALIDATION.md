@@ -1,6 +1,24 @@
 # 本机验证记录
 
-## 事件录像目标框：本机 Windows 测试版（2026-10-19）
+## 人物框连续跟随：本机开发候选（2026-10-19）
+
+实现约束见 [冻结规格](implementation/spec-stable-person-event-boxes.md)。自动/Haar 模式的标注采用独立 NanoDet `person` 定位和前后向 LK 图像跟踪，不使用 Hub 的轮廓作为人物种子；移动模式保留移动区域语义。检测位移完整应用，仅平滑局部残差与尺寸。漏检期间必须有当前帧图像支持，且人物确认在 0.75 秒内；光流不能刷新确认时间。来源、原图尺寸、乱序、过长帧间隔和空输入会重置。模型或处理失败保留原帧，沿用每摄像头一个在途作业和 0.5 秒等待预算。
+
+新增 `tests/test_target_tracking.py` 提供带标签的 480×270/8fps 纹理目标与 MP4 编解码测试，覆盖运动、漏两次确认、中心与尺寸抖动、离开、快跳、背景错误支撑、双目标、静止、重置和原图不变；其标签只证明合成目标的跟踪行为，不能证明真人精度。`tests/test_event_overlay.py` 另覆盖语义定位与事件元数据隔离、真实编码、超时以及跨事件作业隔离。输出 MP4 解码测试实际经过 auto/Haar 标注、8/20 像素每帧移动和两帧漏检，从新增颜色像素提框；至少95%受支持帧的中心误差不超过6像素，静止标签的抖动减少至少25%，确认失效后不超过0.75秒清框。像素中心按描边的离散端点计算，未放宽规格容差。
+
+初审前源码完整离线回归240项通过，43.197秒，无跳过；Windows分发检查10项通过，0.424秒。历史记录：`validation-local/tracking-initial-final-tests-all.log`、`tracking-initial-final-tests-release.log`。首次开发运行的240项曾有3个失败和1个沙箱目录链接跳过（`tracking-all-tests.log`）：旧微信fixture依赖事件轮廓、以及两个新MP4用例的像素中心定义问题，均已修正并保留原始记录。完整通过运行在可检查Windows目录链接的宿主权限下完成。未修改原有Config.save来隐藏历史随机文件占用问题。完整日志仍保留既有远程模拟读取线程的 `queue.Empty` 背景异常；无效MP4用例的 `moov atom not found` 不是额外的真实录像故障。
+
+最终修补后的本机独立产品路径诊断：用户提供的106帧录像保留原有红框/压缩像素，新输出用蓝色区分；88帧有新框输出，不能当作准确率。经实际AnnotationRunner（含JPEG解码、绘制/重编码、线程等待）测得首帧91.852ms、后续p50 62.006ms、p95 64.198ms、最大91.852ms，无降级警告；不包括采集、H.264编码和所有真实多路负载。`nvr/detect.py`、`nvr/hub.py` 与基线内容完全相同。证据：`validation-local/tracking-source-probe-final.log`、`tracking-analysis/product-source-blue-results.json`；这是本机样本检查，不是所有旧电脑的速度保证。
+
+初审前独立Windows候选为139,093,411字节，SHA-256 `b565a7a8e69cb0385201f93aee2c66ee27f8766091a7b9a7fa9b5172f42bf3bf`。同一EXE的6项启动、10项预览模拟、固定模型/许可证及新增模块归档校验通过。实际运动模式合成录像为42帧、5.625秒；实际 auto 人物标注路径使用用户提供的本地旧框素材，输出82帧、10.5秒、其中57帧出现新增蓝色描边，无标注警告。两条链路均通过“今天事件 → 播放第一条 → 本机模拟CDN加密上传/解密”的完成MP4逐字节一致检查；没有将私人素材发送到真实微信或外网。输入已烧录旧框，因此这些帧数不是人物定位准确率，也不是新摄像头/手机验收。此EXE未激活，复审后的代码须另行重新构建和验证。
+
+初审前证据已保存在忽略目录 `validation-local/tracking-initial-*`。独立复审发现的三项边界均已修补并定向复审关闭：同心尺度变化不再保留旧小框形成双框，大幅几何变化立即采用可靠新框，容量上限优先保留本帧已确认人物。新增5项回归，修补前反例失败与修补后47项定向测试通过（17.210秒）的日志均保留。最终Windows分发检查10项通过（0.411秒）。最终245项整套运行有2项在既有 `Config.save/os.replace` 准备阶段遇到 `WinError 5`，单项复核均通过；整套重跑仍有1项同类准备错误（其余244项通过，无失败和跳过），该项单独复核通过（0.008秒）。不能称最终245项整套全部通过，也未为获取绿色结果更改原配置保存逻辑。证据：`tracking-review-regressions-before.log`、`tracking-review-targeted-after.log`、`tracking-final-tests-all.log`、`tracking-final-recheck.log`、`tracking-final-tests-all-retry.log`、`tracking-final-last-recheck.log`、`tracking-final-tests-release.log`。
+
+最终Windows候选大小139,093,328字节，SHA-256 `f2048518ef81595bad6eaac61884ded4fe1eda9ad6a5d241fd65abf09dfd7090`。同一EXE的模型/许可/模块/网页资源、6项启动及10项微信预览模拟检查通过。运动模式合成MP4为42帧、5.625秒，42帧有新增红框；auto人物标注使用用户提供的已含旧框素材，输出82帧、10.625秒，其中57帧有新增蓝框，无标注警告。两条链路的已完成MP4与本机模拟CDN加密上传/解密返回逐字节相同；没有真实新摄像头或真实微信发片参与本轮自动测试。证据：`tracking-build-record.json`、`tracking-exe-assets.json`、`tracking-exe-startup.json`、`tracking-exe-preview.json`、`tracking-motion-exe-report.json`、`tracking-person-exe-report.json`。
+
+最终源码、嵌入模块、全部收据与模型摘要通过独立验收审查；复审发现的三项边界均已关闭。已将上述同一EXE切换到本机8810并启动，保留微信登录/接收状态、原摄像头和录像目录，画框开启且红色，未开启外网中继，未替换正式AppData安装。界面实查开关已勾选，证据：`validation-local/tracking-activation.json`、`tracking-settings.jpg`。已请用户录制新的走动、停顿、转身远离事件，并经回放和真实微信检查；本次真人跟随/手机播放尚待用户反馈，旧版“有框能播放”不能替代本次跟随验收。本轮未发布GitHub。
+
+## 历史：事件录像目标框本机 Windows 测试版（2026-10-19）
 
 已按批准的 [实现规格](implementation/spec-event-target-boxes.md) 开发：新事件默认将目标框写入 MP4 像素，缺少新增字段的旧配置也默认打开。提供 FigJam 指定的红、橙、深蓝三色描边；开关和颜色在事件开始时固定。开启时两种来源都使用共享预览 JPEG 编码为 H.264，RTSP 分辨率可能降为通常宽 480 像素，CPU 占用增加。关闭保留既有 RTSP 原流路径和电脑摄像头单次设备采集。
 
@@ -20,7 +38,7 @@
 
 最终Windows测试版包含上述全部修补，大小135,541,016字节，SHA-256为 `33d436170ade537040c2e7a2e4ed4a96e9d20bc9c9014c6de7ec406f881af020`。同一EXE通过6项启动、10项微信预览模拟检查；带框录像链路再次实际生成43帧、5.75秒合成MP4，43帧检出红色像素，并通过“今天事件 → 播放第一条 → 模拟CDN加密上传/解密”逐字节一致检查。省略字段默认红框开启、非法设置整单拒绝、正常退出均通过。证据为 `validation-local/event-box-build.log`、`event-box-exe-startup.json`、`event-box-exe-preview.json`、`event-box-exe-report.json`。三路审查及最后取消保护复审均已关闭可行动问题；完整回归中既有临时文件错误仍按上文保留。
 
-已用此EXE替换本机8810测试程序并重启：保留微信登录、接收消息状态、摄像头列表和录像目录；未开启远程中继，正式AppData安装未更换。界面实查“事件录像显示目标框”已勾选，颜色为红色，显示清晰度和CPU说明。证据为忽略目录 `validation-local/event-box-activation.json`、`event-box-settings.jpg`。新构建的真实摄像头目标框效果、微信手机实际收件播放仍待用户分别确认，不复用旧构建验收；以上合成移动区域不代表真实行人准确率。本轮仅本机开发，未发布GitHub。
+已用此EXE替换本机8810测试程序并重启：保留微信登录、接收消息状态、摄像头列表和录像目录；未开启远程中继，正式AppData安装未更换。界面实查“事件录像显示目标框”已勾选，颜色为红色，显示清晰度和CPU说明。证据为忽略目录 `validation-local/event-box-activation.json`、`event-box-settings.jpg`。随后用户明确确认“电脑和微信都有框，且能播放”，但指出框不跟随人物、会跳脱，因此只确认了真实收片、播放和有框，不能认定画框质量验收通过。用户提供的13.5秒录像经本机查看，存在框到背景、框突跳和可见人物漏框；素材及分析图片仅留在被忽略目录。修复规划见[人物框连续跟随](implementation/spec-stable-person-event-boxes.md)。以上合成移动区域不代表真实行人准确率。本轮仅本机开发，未发布GitHub。
 
 ## 微信中文事件播放修复（2026-10-19）
 

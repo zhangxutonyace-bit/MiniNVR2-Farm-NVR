@@ -22,6 +22,8 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 NOTICE_NAME = re.compile(r"^(LICENSE|COPYING|NOTICE|AUTHORS)(?:[.\-_]|$)", re.I)
 PRIVATE_PATH = re.compile(r"(?:[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/]|/Users/|/home/)")
 STARTUP_CHECKS = ("http_startup", "port_conflict", "ffmpeg_preview", "web_quit", "lan_requires_token")
@@ -33,6 +35,26 @@ PREVIEW_CHECKS = ("http_startup", "management_anonymous_protection", "synthetic_
 REMOTE_PHONE_CHECKS = ("phone_on_final_exe_verified", "phone_direct_click_verified",
                        "wechat_embedded_browser_verified", "phone_mobile_data_test_flow",
                        "synthetic_only")
+
+
+def validate_bundled_person_assets(executable: Path) -> dict:
+    """Inspect bytes in the onefile archive without starting the executable."""
+    from PyInstaller.archive.readers import CArchiveReader
+    from nvr.person_localizer import MODEL_NAME, MODEL_BYTES, MODEL_SHA256
+    archive = CArchiveReader(str(executable))
+    names = {name.replace("\\", "/"): name for name in archive.toc}
+    expected = {"models/" + MODEL_NAME: (MODEL_BYTES, MODEL_SHA256)}
+    for name in ("LICENSE", "SOURCE.json"):
+        source = REPO / "third_party" / "NanoDet" / name
+        expected["third_party/NanoDet/" + name] = (source.stat().st_size, sha256(source))
+    for relative, (size, digest) in expected.items():
+        if relative not in names:
+            raise ValueError("Executable is missing approved person asset: " + relative)
+        data = archive.extract(names[relative])
+        if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError("Executable person asset differs from approved bytes: " + relative)
+    return {"name": MODEL_NAME, "bytes": MODEL_BYTES, "sha256": MODEL_SHA256,
+            "scope": "Offline CPU person annotation only", "notices_in_exe": True}
 
 
 def sha256(path: Path) -> str:
@@ -240,6 +262,13 @@ def collect_notices(root: Path, release_inputs: Path) -> list[dict]:
     for source, relative in supplemental:
         if source.is_file():
             checked_copy(source, root / relative)
+    person_files = []
+    for name in ("LICENSE", "SOURCE.json"):
+        destination = root / "THIRD_PARTY_NOTICES" / "NanoDet" / name
+        checked_copy(REPO / "third_party" / "NanoDet" / name, destination)
+        person_files.append(destination.relative_to(root).as_posix())
+    components.append({"name": "OpenCV Zoo NanoDet", "version": "2022nov",
+                       "license": "Apache-2.0", "notice_files": person_files})
     return components
 
 
@@ -296,6 +325,7 @@ def main() -> int:
         raise ValueError("Existing executable is not a Windows x64 PE file")
     original_hash = sha256(executable)
     original_size = executable.stat().st_size
+    person_assets = validate_bundled_person_assets(executable)
     validate_build(read_record(args.build_record), args.version, original_hash, original_size)
     startup_checks = STARTUP_CHECKS + (("remote_preview_default_off",) if remote_release else ())
     startup = validate_automatic(read_record(args.startup_record), args.version, startup_checks, "startup",
@@ -348,6 +378,7 @@ def main() -> int:
         "python": {"version": ".".join(map(str, sys.version_info[:3])), "architecture": "x64"},
         "packager": {"name": "PyInstaller", "version": metadata.version("PyInstaller")},
         "runtime_components": components,
+        "annotation_model": person_assets,
         "user_guides": guides,
         "verification": {"existing_local_exe_startup": startup, "clawbot_event_simulation": events,
                          "lan_preview_simulation": preview, phone_verification_key: phone_preview,

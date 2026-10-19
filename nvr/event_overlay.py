@@ -1,7 +1,8 @@
 """Per-event annotation of immutable, frame-matched shared capture packets.
 
-The Hub still owns event decisions. This worker owns a separate MOG2 and Haar
-instance, and never paints on capture, preview or timelapse pixels.
+The Hub still owns event decisions. Person annotation owns a private offline
+network and image tracker; motion annotation retains a separate MOG2 instance.
+Capture, preview and timelapse pixels are never painted.
 """
 from dataclasses import dataclass, replace
 import threading
@@ -11,7 +12,9 @@ import cv2
 import numpy as np
 
 from .detect import Detector
+from .person_localizer import PersonLocalizer
 from .safety import redact_urls
+from .target_tracking import TargetTracker
 
 
 def _raw(sample):
@@ -115,6 +118,8 @@ class EventOverlay:
         self.warning = warning or (lambda message: None)
         self.log = log or (lambda message: None)
         self.detector = None
+        self.localizer = None
+        self.tracker = None
         self.identity = None
         self.cached_packet = None
         self.cached_jpeg = b""
@@ -139,6 +144,8 @@ class EventOverlay:
 
     def reset(self):
         self.detector = None
+        self.localizer = None
+        self.tracker = None
         self.identity = None
         self.cached_packet = None
         self.cached_jpeg = b""
@@ -157,16 +164,30 @@ class EventOverlay:
                 raise ValueError("JPEG decode failed")
             height, width = image.shape[:2]
             identity = (packet.source, width, height)
+            if (self.cached_packet is not None and
+                    (packet.seq <= self.cached_packet.seq or
+                     packet.timestamp <= self.cached_packet.timestamp or
+                     packet.timestamp - self.cached_packet.timestamp > TargetTracker.MAX_AGE)):
+                self.reset()
             if self.identity != identity:
                 self.reset()
-                self.detector = Detector(self.options, independent=True)
+                if (self.options.get("mode") or "auto").lower() == "motion":
+                    self.detector = Detector(self.options, independent=True)
+                else:
+                    self.localizer = PersonLocalizer()
+                    self.tracker = TargetTracker()
                 self.identity = identity
-            positive = self.detector.process(image)
-            boxes = self.detector.confirmed_boxes if positive else ()
-            # Only a specifically paired trigger packet carries Hub metadata.
-            # Processing it above also warms the independent background model.
-            if packet.detection is not None and packet.detection.size == (width, height):
-                boxes = packet.detection.boxes
+            if self.detector is not None:
+                positive = self.detector.process(image)
+                boxes = self.detector.confirmed_boxes if positive else ()
+                # Only motion mode may reuse specifically paired Hub regions.
+                if packet.detection is not None and packet.detection.size == (width, height):
+                    boxes = packet.detection.boxes
+            else:
+                # The Hub's auto/Haar contours are event metadata, not semantic
+                # people. Localization always sees pristine decoded pixels.
+                boxes = self.tracker.update(image, self.localizer.locate(image),
+                                            packet.timestamp, packet.seq, packet.source)
             if boxes:
                 annotated = image.copy()
                 for x, y, w, h in boxes:

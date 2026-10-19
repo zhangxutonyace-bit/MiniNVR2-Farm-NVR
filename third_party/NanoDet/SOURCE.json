@@ -1,0 +1,11 @@
+{
+  "component": "OpenCV Zoo NanoDet-m-plus-1.5x_416",
+  "license": "Apache-2.0",
+  "upstream_revision": "25f423d0e04c31a17254620e58febd7386da523b",
+  "model_url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/25f423d0e04c31a17254620e58febd7386da523b/models/object_detection_nanodet/object_detection_nanodet_2022nov.onnx",
+  "model_sha256": "4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186",
+  "model_bytes": 3800954,
+  "license_url": "https://raw.githubusercontent.com/opencv/opencv_zoo/25f423d0e04c31a17254620e58febd7386da523b/models/object_detection_nanodet/LICENSE",
+  "annotation_scope": "Offline CPU, person class only, independent of event decisions",
+  "runtime_downloads": false
+}

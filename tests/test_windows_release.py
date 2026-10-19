@@ -150,6 +150,7 @@ class WindowsReleaseTests(unittest.TestCase):
                         mock.patch.object(release.sys, "argv", argv), \
                         mock.patch.object(release.sys, "version_info", (3, 12, 10)), \
                         mock.patch.object(release, "collect_notices", synthetic_notices), \
+                        mock.patch.object(release, "validate_bundled_person_assets", return_value={"synthetic": True}), \
                         mock.patch.object(release, "commit_id", return_value="c" * 40), \
                         mock.patch.object(release.metadata, "version", return_value="6.16.0"), \
                         mock.patch.object(release.subprocess, "run", side_effect=AssertionError("No process should run")), \
@@ -178,6 +179,25 @@ class WindowsReleaseTests(unittest.TestCase):
                         self.assertIn("real_phone_lan_preview", verification)
                         self.assertNotIn("real_phone_remote_preview", verification)
                 self.assertEqual((repo / "dist" / "MiniNVR2.exe").read_bytes(), bytes(executable))
+
+    def test_person_assets_require_exact_model_and_notices_inside_executable(self):
+        from nvr.person_localizer import MODEL_NAME, verify_model
+        assets = {"models/" + MODEL_NAME: verify_model().read_bytes()}
+        for name in ("LICENSE", "SOURCE.json"):
+            assets["third_party/NanoDet/" + name] = (release.REPO / "third_party" / "NanoDet" / name).read_bytes()
+        archive = mock.Mock()
+        archive.toc = dict.fromkeys(assets)
+        archive.extract.side_effect = lambda name: assets[name]
+        with mock.patch("PyInstaller.archive.readers.CArchiveReader", return_value=archive):
+            result = release.validate_bundled_person_assets(Path("synthetic.exe"))
+            self.assertTrue(result["notices_in_exe"])
+            original = assets["models/" + MODEL_NAME]
+            assets["models/" + MODEL_NAME] = b"x" + original[1:]
+            with self.assertRaises(ValueError):
+                release.validate_bundled_person_assets(Path("synthetic.exe"))
+            archive.toc.pop("models/" + MODEL_NAME)
+            with self.assertRaises(ValueError):
+                release.validate_bundled_person_assets(Path("synthetic.exe"))
 
 
 if __name__ == "__main__":

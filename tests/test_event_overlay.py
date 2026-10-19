@@ -2,6 +2,7 @@
 import json
 import re
 import subprocess
+import tempfile
 import threading
 import time
 import unittest
@@ -17,6 +18,7 @@ from nvr.camera import Cam
 from nvr.config import Config, TARGET_BOX_COLORS
 from nvr.detect import Detector
 from nvr.event_overlay import AnnotationRunner, Detection, EventOverlay, FramePacket
+from nvr.person_localizer import PersonDetection
 from nvr.server import create_app
 from tests.support import OfflineTestCase
 from tests.test_api import FakeHub
@@ -32,6 +34,12 @@ def image_packet(seq=1, source=("fixture",), value=40, detection=None, size=(320
 def colored_pixels(image, color):
     bgr = np.array([int(color[i:i + 2], 16) for i in (5, 3, 1)])
     return np.max(np.abs(image.astype(np.int16) - bgr), axis=2) < 65
+
+
+class FixedLocalizer:
+    """Explicit semantic fixture, unrelated to the Hub's contour metadata."""
+    def locate(self, image):
+        return (PersonDetection((70, 20, 80, 130), .9),)
 
 
 class DetectorMetadataTests(OfflineTestCase):
@@ -91,7 +99,7 @@ class OverlayTests(OfflineTestCase):
         logs, warnings = [], []
         error = RuntimeError("failed rtsp://username:secret@fixture/live?token=private\n" + "x" * 400)
         overlay = EventOverlay("#F51616", {}, warnings.append, logs.append)
-        with mock.patch("nvr.event_overlay.Detector", side_effect=error):
+        with mock.patch("nvr.event_overlay.PersonLocalizer", side_effect=error):
             self.assertEqual(overlay.render(packet), packet.jpeg)
         self.assertEqual(len(logs), 1)
         self.assertIn("RuntimeError", logs[0])
@@ -101,7 +109,7 @@ class OverlayTests(OfflineTestCase):
         self.assertLess(len(logs[0]), 230)
         broken_logger = mock.Mock(side_effect=OSError("log unavailable"))
         overlay = EventOverlay("#F51616", {}, warnings.append, broken_logger)
-        with mock.patch("nvr.event_overlay.Detector", side_effect=error):
+        with mock.patch("nvr.event_overlay.PersonLocalizer", side_effect=error):
             self.assertEqual(overlay.render(packet), packet.jpeg)
         self.assertEqual(len(warnings), 2)
 
@@ -138,12 +146,25 @@ class OverlayTests(OfflineTestCase):
         warnings = []
         packet = image_packet()
         overlay = EventOverlay("#0931C0", {"mode": "auto"}, warnings.append)
-        with mock.patch("nvr.event_overlay.Detector", side_effect=RuntimeError("fixture")):
+        with mock.patch("nvr.event_overlay.PersonLocalizer", side_effect=RuntimeError("fixture")):
             self.assertEqual(overlay.render(packet), packet.jpeg)
             self.assertEqual(overlay.render(image_packet(seq=2)), packet.jpeg)
         self.assertEqual(len(warnings), 1)
         self.assertIn("已保留原画面", warnings[0])
         self.assertIsNone(overlay.cached_packet)
+
+    def test_person_annotation_never_seeds_from_paired_event_contours(self):
+        for mode in ("auto", "haar"):
+            overlay = EventOverlay("#F51616", {"mode": mode})
+            packet = image_packet(detection=Detection(((60, 20, 50, 120),), "heuristic", (320, 180)))
+            localizer = mock.Mock()
+            localizer.locate.return_value = ()
+            with mock.patch("nvr.event_overlay.PersonLocalizer", return_value=localizer), \
+                    mock.patch("nvr.event_overlay.Detector", side_effect=AssertionError("No motion person fallback")):
+                self.assertEqual(overlay.render(packet), packet.jpeg)
+                self.assertEqual(overlay.render(packet), packet.jpeg)
+            self.assertEqual(localizer.locate.call_count, 1, "Duplicate cache must be idempotent")
+            self.assertEqual(overlay.tracker.last_boxes, ())
 
     def test_frame_and_sequence_remain_paired_during_concurrent_capture(self):
         camera = Cam(spec(), self.cfg)
@@ -288,6 +309,52 @@ class OverlaySettingsTests(OfflineTestCase):
 
 
 class BurnedVideoTests(OfflineTestCase):
+    def test_moving_person_fixture_centers_in_actual_annotated_mp4(self):
+        from tests.test_target_tracking import Scene, center
+        for speed, mode in ((8, "auto"), (20, "auto"), (8, "haar"), (20, "haar")):
+            with self.subTest(speed=speed, mode=mode), tempfile.TemporaryDirectory() as directory:
+                scene, labels, packets, observed = Scene(), [], [], []
+                # Neutral texture makes the new red outline measurable after
+                # both JPEG and MP4 encoding, without using any old red border.
+                scene.background[:] = cv2.cvtColor(cv2.cvtColor(scene.background, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+                scene.targets = [cv2.cvtColor(cv2.cvtColor(item, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+                                 for item in scene.targets]
+                for i in range(25):
+                    image, boxes = scene.frame([(15 + speed * min(i, 16), 70)])
+                    labels.append(boxes[0])
+                    jpeg = cv2.imencode(".jpg", image)[1].tobytes()
+                    packets.append(FramePacket(jpeg, i, i / 8, ("labeled-codec",)))
+                    jitter = (-6, 6, -3, 3)[i % 4]
+                    observed.append(() if i in (4, 5, 11, 12) or i > 16 else
+                                    (PersonDetection((boxes[0][0] + jitter, 70, 52, 108), .9),))
+                localizer = mock.Mock()
+                localizer.locate.side_effect = observed
+                overlay = EventOverlay("#F51616", {"mode": mode})
+                path = Path(directory) / "moving-annotation.mp4"
+                writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 8, (480, 270))
+                self.assertTrue(writer.isOpened())
+                try:
+                    with mock.patch("nvr.event_overlay.PersonLocalizer", return_value=localizer):
+                        for packet in packets:
+                            output = overlay.render(packet)
+                            writer.write(cv2.imdecode(np.frombuffer(output, np.uint8), cv2.IMREAD_COLOR))
+                finally:
+                    writer.release()
+                frames = self.decoded_frames(path)
+                self.assertEqual(len(frames), len(labels))
+                errors = []
+                for i, (frame, truth) in enumerate(zip(frames, labels)):
+                    yy, xx = np.nonzero(colored_pixels(frame, "#F51616"))
+                    if i > 22:  # Last semantic confirmation was frame 16.
+                        self.assertEqual(len(xx), 0, "Flow cannot prolong .75 second expiry")
+                        continue
+                    self.assertGreater(len(xx), 100)
+                    measured = np.array(((xx.min() + xx.max()) / 2, (yy.min() + yy.max()) / 2))
+                    # xywh covers discrete pixels x..x+w-1, matching the
+                    # rectangle rasterizer's inclusive end point.
+                    errors.append(float(np.linalg.norm(measured - (center(truth) - .5))))
+                self.assertGreaterEqual(sum(error <= 6 for error in errors) / len(errors), .95)
+
     def decoded_frames(self, path):
         video = cv2.VideoCapture(str(path))
         frames = []
@@ -312,26 +379,25 @@ class BurnedVideoTests(OfflineTestCase):
     def test_blocked_annotation_preserves_raw_video_and_one_native_job_across_events(self):
         entered, release = threading.Event(), threading.Event()
         calls = []
-        class BlockingDetector:
-            confirmed_boxes = ()
+        class BlockingLocalizer:
             def __init__(self, *args, **kwargs):
                 self.first = not calls
-            def process(self, image):
+            def locate(self, image):
                 calls.append(1)
                 if self.first:
                     entered.set()
                     release.wait(10)
-                    self.confirmed_boxes = ((20, 20, 50, 120),)
+                    boxes = ((20, 20, 50, 120),)
                 else:
-                    self.confirmed_boxes = ((210, 20, 50, 120),)
-                return True
+                    boxes = ((210, 20, 50, 120),)
+                return tuple(PersonDetection(box, .9) for box in boxes)
         logs = []
         camera = Cam(spec(), self.cfg, log=logs.append)
         packet = image_packet()
         camera.state, camera.last_jpeg, camera.seq, camera.last_ts = "online", packet.jpeg, 1, packet.timestamp
         self.addCleanup(camera.stop)
         self.addCleanup(release.set)
-        with mock.patch("nvr.event_overlay.Detector", BlockingDetector):
+        with mock.patch("nvr.event_overlay.PersonLocalizer", BlockingLocalizer):
             camera.start_record()
             old_token = camera._annotation_event
             self.assertTrue(entered.wait(2))
@@ -371,19 +437,18 @@ class BurnedVideoTests(OfflineTestCase):
         self.assertFalse(any(mask[18:24, 25:65].any() for mask in blue), "Late old coordinates must not appear")
 
     def test_new_frame_geometry_moves_then_negative_frame_clears_burned_boxes(self):
-        class GeometryDetector:
-            confirmed_boxes = ()
+        class GeometryLocalizer:
             def __init__(self, *args, **kwargs):
                 pass
-            def process(self, image):
+            def locate(self, image):
                 level = float(np.median(image))
-                self.confirmed_boxes = (((20, 20, 50, 120),) if level < 70 else
+                boxes = (((20, 20, 50, 120),) if level < 70 else
                                         ((210, 20, 50, 120),) if level < 130 else ())
-                return bool(self.confirmed_boxes)
+                return tuple(PersonDetection(box, .9) for box in boxes)
         camera = Cam(spec(), self.cfg)
         self.addCleanup(camera.stop)
         camera.state = "online"
-        with mock.patch("nvr.event_overlay.Detector", GeometryDetector):
+        with mock.patch("nvr.event_overlay.PersonLocalizer", GeometryLocalizer):
             for seq, level in ((1, 40), (2, 100), (3, 160)):
                 packet = image_packet(seq=seq, value=level)
                 with camera.lock:
@@ -444,7 +509,8 @@ class BurnedVideoTests(OfflineTestCase):
         camera.last_jpeg, camera.seq, camera.last_ts = packet.jpeg, packet.seq, packet.timestamp
         _, sample = camera.frame_sample()
         sample = FramePacket(sample.jpeg, sample.seq, sample.timestamp, sample.source, packet.detection)
-        with mock.patch("nvr.camera.popen") as source_open:
+        with mock.patch("nvr.camera.popen") as source_open, \
+                mock.patch("nvr.event_overlay.PersonLocalizer", FixedLocalizer):
             camera.start_record(sample)
             self.assertTrue(camera.recording())
             recorder = camera._jpeg_recorder
@@ -481,6 +547,9 @@ class BurnedVideoTests(OfflineTestCase):
         camera.state, camera.last_jpeg, camera.seq, camera.last_ts = "online", packet.jpeg, 1, packet.timestamp
         _, current = camera.frame_sample()
         trigger = FramePacket(current.jpeg, current.seq, current.timestamp, current.source, packet.detection)
+        patcher = mock.patch("nvr.event_overlay.PersonLocalizer", FixedLocalizer)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         camera.start_record(trigger)
         first = camera._jpeg_recorder
         self.cfg.set("record", "target_box_color", "#0931C0", save=False)
@@ -510,7 +579,7 @@ class BurnedVideoTests(OfflineTestCase):
         self.addCleanup(camera.stop)
         packet = image_packet()
         camera.state, camera.last_jpeg, camera.seq, camera.last_ts = "online", packet.jpeg, 1, packet.timestamp
-        with mock.patch("nvr.event_overlay.Detector", side_effect=RuntimeError("fixture")):
+        with mock.patch("nvr.event_overlay.PersonLocalizer", side_effect=RuntimeError("fixture")):
             camera.start_record()
             self.wait_until(lambda: camera._jpeg_recorder.frames >= 3)
             part = Path(camera.rec_path)

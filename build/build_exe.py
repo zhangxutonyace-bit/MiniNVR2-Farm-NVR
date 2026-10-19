@@ -63,6 +63,19 @@ def build(clean=False):
         print(">>> 缺少打包依赖，请先安装 requirements-build.txt: %s" % e)
         return 1
 
+    # Fail before invoking the packager if the approved offline asset drifted.
+    sys.path.insert(0, REPO)
+    from nvr.person_localizer import verify_model
+    try:
+        person_model = verify_model()
+    except RuntimeError as exc:
+        print(">>> 人物框模型校验失败: %s" % exc)
+        return 1
+    person_notices = Path(REPO) / "third_party" / "NanoDet"
+    if not all((person_notices / name).is_file() for name in ("LICENSE", "SOURCE.json")):
+        print(">>> 缺少人物框模型许可证或来源清单")
+        return 1
+
     ff = ffmpeg_path()
     if not ff:
         print(">>> 未找到 FFmpeg，请安装 requirements-build.txt")
@@ -84,6 +97,8 @@ def build(clean=False):
     datas = [
         os.path.join(REPO, "web") + sep + "web",   # 前端页面 → 包根/web
         haar_dir.rstrip("/\\") + sep + "cv2/data",
+        str(person_model) + sep + "models",
+        str(person_notices) + sep + "third_party/NanoDet",
     ]
     binaries = [packaged_ff + sep + "."]
 
@@ -106,7 +121,7 @@ def build(clean=False):
               "imageio_ffmpeg", "jinja2", "werkzeug", "email", "smtplib",
               "qrcode", "cryptography"):
         cmd += ["--hidden-import", h]
-    # 只留必要依赖，砍掉一切重型库（本项目不需要深度学习/科学计算）
+    # 画框模型仅使用现有 OpenCV DNN CPU，不打包额外推理运行时。
     for m in ("torch", "torchvision", "ultralytics", "matplotlib", "scipy",
               "pandas", "tensorflow", "tkinter", "IPython", "notebook",
               "sklearn", "pytest", "PyQt5", "PySide2", "onnxruntime"):

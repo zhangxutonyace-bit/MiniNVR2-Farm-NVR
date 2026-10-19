@@ -619,7 +619,7 @@ class ClawBotEventMediaTests(EventFixture):
         from nvr.event_overlay import Detection, FramePacket
         from nvr.server import create_app
         from tests.test_api import FakeHub
-        from tests.test_event_overlay import colored_pixels, image_packet
+        from tests.test_event_overlay import FixedLocalizer, colored_pixels, image_packet
 
         camera = Cam(self.cfg.get_camera("farm"), self.cfg)
         self.addCleanup(camera.stop)
@@ -627,10 +627,11 @@ class ClawBotEventMediaTests(EventFixture):
         camera.state, camera.last_jpeg, camera.seq, camera.last_ts = "online", packet.jpeg, 1, packet.timestamp
         _, paired = camera.frame_sample()
         paired = FramePacket(paired.jpeg, paired.seq, paired.timestamp, paired.source, packet.detection)
-        camera.start_record(paired)
-        part = Path(camera.rec_path)
-        self.wait_until(lambda: camera._jpeg_recorder.frames >= 5)
-        camera.stop_record()
+        with mock.patch("nvr.event_overlay.PersonLocalizer", FixedLocalizer):
+            camera.start_record(paired)
+            part = Path(camera.rec_path)
+            self.wait_until(lambda: camera._jpeg_recorder.frames >= 5)
+            camera.stop_record()
         completed = part.with_name(part.name.replace(".part.mp4", ".mp4"))
         original = completed.read_bytes()
         client = create_app(self.cfg, FakeHub()).test_client()

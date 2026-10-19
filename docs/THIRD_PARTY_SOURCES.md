@@ -3,6 +3,18 @@
 本文件对应 MiniNVR2 2.3.0 Windows x64 发布包，沿用2.2.3的相同第三方组件；来源资料核对日期为 2026-10-18，本轮依赖版本及包内文件于2026-10-19复核。NetBird 客户端未内置分发，由用户另从其官网下载。
 程序 ZIP 内的 `THIRD_PARTY_NOTICES/` 保存随包许可证；本页提供源代码和构建来源。
 
+## 本机开发候选新增：离线人物画框模型
+
+自动/Haar 模式的人物框使用 OpenCV Zoo 的 NanoDet-m-plus-1.5x_416，仅取 COCO `person`（索引 0），由现有 OpenCV DNN 在 CPU 上推理。它独立于事件触发判断，不在运行时下载模型，不使用云端推理。
+
+- 文件：`models/object_detection_nanodet_2022nov.onnx`，3,800,954 字节。
+- SHA-256：`4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186`。
+- [固定上游版本及说明](https://github.com/opencv/opencv_zoo/tree/25f423d0e04c31a17254620e58febd7386da523b/models/object_detection_nanodet)。
+- [精确模型下载](https://media.githubusercontent.com/media/opencv/opencv_zoo/25f423d0e04c31a17254620e58febd7386da523b/models/object_detection_nanodet/object_detection_nanodet_2022nov.onnx)。
+- Apache-2.0 [上游许可证](https://github.com/opencv/opencv_zoo/blob/25f423d0e04c31a17254620e58febd7386da523b/models/object_detection_nanodet/LICENSE)，本地保留于 `third_party/NanoDet/LICENSE`；`SOURCE.json` 保存来源、固定提交及摘要。
+
+构建会先核对模型大小和摘要，再将模型与许可证打入独立 EXE。发布打包会直接检查 EXE 内的模型/许可证字节，并将许可证和来源清单复制至 `THIRD_PARTY_NOTICES/NanoDet/`。不额外引入 PyTorch、ONNX Runtime 或 GPU 运行时。
+
 ## FFmpeg 命令行程序
 
 独立的 FFmpeg 由 imageio-ffmpeg 0.6.0 Windows wheel 提供，版本为
