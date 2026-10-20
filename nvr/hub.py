@@ -188,6 +188,7 @@ class Hub(object):
     def _start_threads(self):
         self._threads = [threading.Thread(target=target, daemon=True)
                          for target in (self._sync_worker, self._detect_loop,
+                                        self._preview_semantic_loop,
                                         self._daily_loop)]
         for thread in self._threads:
             thread.start()
@@ -301,14 +302,60 @@ class Hub(object):
         with self.lock:
             return [c.info() for c in self.cams.values()]
 
+    # ---------------- 按需共享预览语义（不判定事件） ----------------
+
+    def _refresh_preview_semantics(self, cam):
+        # Preview never waits in an algorithm-apply/event queue. There is one
+        # coordinator for the Hub, independent of how many HTTP viewers exist.
+        if self._stop.is_set() or not self.algorithm_lock.acquire(blocking=False):
+            return False
+        try:
+            with self.lock:
+                current = self.cams.get(cam.id) is cam and not self._stop.is_set()
+            if not current:
+                return False
+            with self.cfg.lock:
+                spec = dict(self.cfg.get_camera(cam.id) or {})
+                detect = dict(self.cfg.get("detect"))
+            if (not spec or not spec.get("enabled", True) or not spec.get("detect", True)
+                    or not detect.get("enabled", True) or detect.get("mode") != "market"
+                    or source_identity(spec) != worker_identity(cam) or self._stop.is_set()):
+                return False
+            # The Cam rechecks demand, frame identity, exact model revision,
+            # cached positives/negatives and existing in-flight work. This only
+            # produces a paired model result: no hit/person/record state changes.
+            return cam.refresh_preview_semantics()
+        finally:
+            self.algorithm_lock.release()
+
+    def _preview_semantic_loop(self):
+        while not self._stop.is_set():
+            started = time.monotonic()
+            with self.lock:
+                cams = list(self.cams.values())
+            for cam in cams:
+                if self._stop.is_set():
+                    return
+                try:
+                    self._refresh_preview_semantics(cam)
+                except Exception:
+                    self.log("[预览] 共享识别刷新暂不可用，当前保留原画面。")
+            # Include native work in the interval rather than adding another
+            # full sleep. Slow work keeps one interruptible wait and no backlog.
+            if self._stop.wait(max(.02, .25 - (time.monotonic() - started))):
+                return
+
     # ---------------- 人形检测（全局串行） ----------------
 
     def _detect_loop(self):
         while not self._stop.is_set():
             interval = 0.5
+            started = time.monotonic()
+            market = False
             try:
                 d = self.cfg.get("detect")
                 interval = max(0.05, float(d.get("interval", 0.5) or 0.5))
+                market = d.get("mode") == "market"
 
                 with self.lock:
                     cams = list(self.cams.values())
@@ -321,7 +368,13 @@ class Hub(object):
                         self._detect_camera(cam, current)
             except Exception as e:
                 self.log("[检测] 异常: %s" % e)
-            if self._stop.wait(interval):
+            # The store runner is also the preview's semantic source. Sleeping
+            # a whole interval *after* a slow native result adds a second delay
+            # and starves the existing 0.75 s tracker even at a 0.5 s setting.
+            # Use start-to-start cadence for store mode, without another model
+            # or busy loop. Legacy detector timing remains unchanged.
+            delay = max(.02, interval - (time.monotonic() - started)) if market else interval
+            if self._stop.wait(delay):
                 return
 
     def algorithm_revision(self):

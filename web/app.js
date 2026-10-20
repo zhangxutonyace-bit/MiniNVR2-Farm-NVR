@@ -64,9 +64,10 @@ $$('header nav button').forEach(function (b) {
 });
 
 /* ---------------- 视频墙 ---------------- */
-var wallState = { sig: '', cells: {} };
+var wallState = { sig: '', cells: {}, cams: [] };
 
 function renderWall(cams) {
+  wallState.cams = cams || [];
   var list = (cams || []).filter(function (c) { return c.enabled; });
   var cols = $('#wallCols').value || '2';
   var sig = list.map(function (c) { return c.id; }).join('|') + '#' + cols;
@@ -83,7 +84,7 @@ function renderWall(cams) {
     wall.className = 'wall c' + cols;
     wall.innerHTML = list.map(function (c) {
       return '<div class="cell" data-id="' + esc(c.id) + '">' +
-        '<img src="/live/' + esc(c.id) + '" alt="">' +
+        '<img src="/live/' + esc(c.id) + '?boxes=' + ($('#wallBoxes').checked ? '1' : '0') + '" alt="">' +
         '<div class="bar"><span class="nm">' + esc(c.name) + '</span>' +
         '<span class="st"></span></div></div>';
     }).join('');
@@ -104,9 +105,24 @@ function renderWall(cams) {
         : '<span class="tag off">离线</span>');
     if (c.person) s += ' <span class="tag human">检测到目标</span>';
     if (c.rec) s += ' <span class="tag warn">录像中</span>';
+    if ($('#wallBoxes').checked && c.preview_warning) s += ' <span class="tag warn" title="' + esc(c.preview_warning) + '">画框暂缓</span>';
+    if ($('#wallBoxes').checked && !c.preview_boxes_eligible) s += ' <span class="tag">原画面</span>';
     if (box.html !== s) { box.html = s; box.st.innerHTML = s; }
   });
+  $('#wallPreviewHint').textContent = !$('#wallBoxes').checked
+    ? '正在查看原画面；此开关只影响预览，不改变事件录像和抽帧。'
+    : (list.some(function (c) { return c.preview_boxes_eligible; })
+      ? '显示当前生效算法的选中目标。短暂漏检由图像跟踪衔接；处理较慢时显示当前原画面。微信预览沿用原有约每秒一帧的刷新频率。'
+      : '需先在“算法商城”应用模型和目标，并打开全局“启用检测”和摄像头“参与检测”。旧自动 / Haar / 移动模式显示原画面。');
 }
+
+$('#wallBoxes').onchange = function () {
+  $$('#wall .cell').forEach(function (cell) {
+    cell.querySelector('img').src = '/live/' + encodeURIComponent(cell.dataset.id)
+      + '?boxes=' + ($('#wallBoxes').checked ? '1' : '0');
+  });
+  renderWall(wallState.cams);
+};
 
 /* ---------------- 摄像头表格 ---------------- */
 var camRows = {};
@@ -167,6 +183,7 @@ function renderCams(cams) {
     if (c.error && c.enabled) s += '<div class="hint">' + esc(c.error) + '</div>';
     if (c.annotation_warning && c.enabled) s += '<div class="hint">⚠ ' + esc(c.annotation_warning) + '</div>';
     if (c.algorithm_warning && c.enabled) s += '<div class="hint">⚠ ' + esc(c.algorithm_warning) + '</div>';
+    if (c.preview_warning && c.enabled) s += '<div class="hint">⚠ ' + esc(c.preview_warning) + '</div>';
     if (r.html !== s) { r.html = s; r.st.innerHTML = s; }
     r.tog.textContent = c.enabled ? '停用' : '启用';
   });

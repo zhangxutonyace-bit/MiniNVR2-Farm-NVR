@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Web 服务。
 
-预览 = 把 ffmpeg 已经编码好的 JPEG 原样转发给浏览器，Python 一帧都不编。
-后台抽帧 / 检测 / 存盘全在别的线程和子进程里，挤不到预览这条路上。
+预览读取每路共享的后台画框缓存；原图选项直接转发 ffmpeg JPEG。
+HTTP 不执行识别、跟踪或编码，后台处理过慢时继续发送当前原画面。
 """
 import ctypes
 import copy
@@ -19,7 +19,7 @@ from contextlib import nullcontext
 
 import cv2
 import numpy as np
-from flask import Flask, Response, jsonify, request, send_from_directory, session
+from flask import Flask, Response, g, jsonify, request, send_from_directory, session
 
 from . import __version__, discovery
 from .config import Config, records_root
@@ -138,6 +138,9 @@ def create_app(cfg, hub, on_quit=None):
             if not isinstance(request.get_json(silent=True), dict):
                 return jsonify({"ok": False, "msg": "请求必须是 JSON 对象"}), 400
         token = token_value()
+        # Bind long-lived responses to the credential generation actually
+        # checked here, including password changes before the route handler.
+        g.authorized_token_generation = token_fingerprint(token)
         if not token:
             if not local_request():
                 return jsonify({"ok": False, "msg": "请先在本机设置访问口令，再启用局域网访问"}), 403
@@ -246,28 +249,91 @@ def create_app(cfg, hub, on_quit=None):
     def appjs():
         return send_from_directory(WEB, "app.js")
 
-    # ---------------- 预览：原样转发 ffmpeg 的 JPEG ----------------
+    def preview_view(cid, camera, boxes):
+        """A lightweight read boundary; no image/model work or held Hub lock.
+
+        Config is saved before its asynchronous camera replacement. Bind the
+        JPEG read to both the active worker and its capture/model generation,
+        then compare the same view again before sending any of its bytes.
+        """
+        if camera is None or hub.get(cid) is not camera:
+            return None
+        with cfg.lock:
+            spec = next((c for c in cfg.cameras if c.get("id") == cid), None)
+            if spec is None or not spec.get("enabled", True):
+                return None
+            source = local_camera.source_identity(spec)
+        with (getattr(camera, "lock", None) or nullcontext()):
+            stopped = getattr(camera, "_stop_event", None)
+            if (not getattr(camera, "enabled", True)
+                    or (stopped is not None and stopped.is_set())
+                    or local_camera.worker_identity(camera) != source):
+                return None
+            epoch = getattr(camera, "_capture_epoch", None)
+        context = getattr(camera, "_preview_context", None)
+        revision = context() if boxes and callable(context) else None
+        return source, epoch, revision
+
+    # ---------------- 预览：共享缓存，HTTP 不做图像处理 ----------------
     @app.route("/live/<cid>")
     def live(cid):
-        cam = hub.get(cid)
+        boxes = request.args.get("boxes", "1") != "0"
+        authorized_token = g.authorized_token_generation
 
         def gen():
             last_seq = -1
             last_buf = b""      # 保留最近一帧：在线但瞬时无新帧时冻结，绝不弹占位图
             last_ph = 0.0
+            last_emit = 0.0
+            worker = None
+            worker_view = None
             while True:
+                # The response generator outlives the request context. Keep a
+                # fingerprint, not credentials/session, and revoke open streams
+                # as soon as the configured access token changes.
+                if not hmac.compare_digest(authorized_token, token_fingerprint(token_value())):
+                    return
+                cam = hub.get(cid)
+                view = preview_view(cid, cam, boxes)
+                if view is None:
+                    cam = None
+                if cam is not worker or view != worker_view:
+                    worker, worker_view = cam, view
+                    last_seq, last_buf, last_emit = -1, b"", 0.0
                 if cam is None:
                     yield _frame(placeholder("未启用"))
                     time.sleep(1.0)
                     continue
-                buf, seq = cam.snapshot()
+                buf, seq = (cam.preview_snapshot(boxes=boxes)
+                            if hasattr(cam, "preview_snapshot") else cam.snapshot())
+                current_view = preview_view(cid, cam, boxes)
+                if not hmac.compare_digest(authorized_token, token_fingerprint(token_value())):
+                    return
+                if current_view != view:
+                    # Discard both this read and the previous heartbeat cache.
+                    # A replacement capture may restart its sequence at zero.
+                    worker, worker_view = None, None
+                    last_seq, last_buf, last_emit = -1, b"", 0.0
+                    time.sleep(.02)
+                    continue
                 if buf and cam.state == "online":
-                    # 在线只发真实画面；没有新帧就重发上一帧（冻结），不再插入「等待画面」
-                    if seq != last_seq:
+                    if last_seq != -1 and seq < last_seq:
+                        time.sleep(.02)
+                        continue
+                    changed = seq != last_seq or buf != last_buf
+                    now = time.monotonic()
+                    # Poll the shared cache lightly without resending identical
+                    # JPEGs at capture cadence. This avoids phase-aliasing a
+                    # briefly ready frame; keepalive still carries real pixels.
+                    if not changed and now - last_emit < .5:
+                        time.sleep(.02)
+                        continue
+                    if changed:
                         last_seq = seq
                         last_buf = buf
+                    last_emit = now
                     yield _frame(last_buf)
-                    time.sleep(0.1)
+                    time.sleep(.02)
                     continue
                 # 仅非在线态才下发状态提示图（连接中 / 离线 / 未启用）——这是真状态，不是多余画面
                 now = time.time()
@@ -290,7 +356,22 @@ def create_app(cfg, hub, on_quit=None):
     @app.route("/snap/<cid>")
     def snap(cid):
         cam = hub.get(cid)
-        buf = cam.snapshot()[0] if cam else b""
+        if request.args.get("boxes") == "1":
+            authorized_token = g.authorized_token_generation
+            if not hmac.compare_digest(authorized_token, token_fingerprint(token_value())):
+                return jsonify({"ok": False, "msg": "请输入访问口令", "auth_required": True}), 401
+            view = preview_view(cid, cam, True)
+            if view is None:
+                return jsonify({"ok": False, "msg": "摄像头已停用或画面来源已变化"}), 503
+            buf = (cam.preview_snapshot(boxes=True)[0]
+                   if hasattr(cam, "preview_snapshot") else cam.snapshot()[0])
+            current_view = preview_view(cid, cam, True)
+            if not hmac.compare_digest(authorized_token, token_fingerprint(token_value())):
+                return jsonify({"ok": False, "msg": "请输入访问口令", "auth_required": True}), 401
+            if current_view != view:
+                return jsonify({"ok": False, "msg": "摄像头或算法已变化，请重试"}), 503
+        else:
+            buf = cam.snapshot()[0] if cam else b""
         if not buf:
             buf = placeholder("无画面")
         return Response(buf, mimetype="image/jpeg")

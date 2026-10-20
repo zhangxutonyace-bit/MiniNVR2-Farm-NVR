@@ -174,6 +174,9 @@ class Cam(threading.Thread):
         self._algorithm_runner = None
         self._algorithm_state_lock = threading.Lock()
         self.algorithm_warning = ""
+        self.preview_warning = ""
+        self._live_preview = None
+        self._live_preview_lock = threading.Lock()
 
     # ---------------- 生命周期 ----------------
 
@@ -189,7 +192,13 @@ class Cam(threading.Thread):
             self._watch.start()
 
     def stop(self):
-        self._stop_event.set()
+        with self._live_preview_lock:
+            # Admission and shutdown share one boundary: a delayed HTTP reader
+            # cannot create/start a new worker after stop has captured its slot.
+            self._stop_event.set()
+            preview = self._live_preview
+        if preview is not None:
+            preview.stop()
         self.reset_algorithm()
         self._close_proc()
         self.stop_record()
@@ -552,6 +561,61 @@ class Cam(threading.Thread):
         with self.lock:
             return self.last_jpeg, self.seq
 
+    def _preview_context(self):
+        """An eligible current model revision, without loading or running it."""
+        from .algorithm_catalog import revision_for, validate_persisted_options
+        if self._stop_event.is_set() or not self.enabled or not self.detect_on:
+            return None
+        try:
+            with self.cfg.lock:
+                spec = self.cfg.get_camera(self.id)
+                if (spec is None or not spec.get("enabled", True)
+                        or not spec.get("detect", True)
+                        or source_identity(spec) != self.source_identity):
+                    return None
+                detect = dict(self.cfg.get("detect"))
+                options = dict(self.cfg.get("algorithms"))
+            if not detect.get("enabled", True) or detect.get("mode") != "market":
+                return None
+            return revision_for(validate_persisted_options(options))
+        except (ValueError, TypeError):
+            return None
+
+    def _preview_failed(self, message):
+        self.preview_warning = message
+
+    def preview_sample(self, boxes=True):
+        """Read an asynchronously rendered, paired preview or current raw frame.
+
+        This path never decodes, infers, tracks or encodes. A rendered cache is
+        allowed a short bounded display delay and retains its capture identity.
+        """
+        raw = self.record_sample()
+        context = self._preview_context() if boxes and raw.jpeg else None
+        with self._live_preview_lock:
+            if self._stop_event.is_set() or not self.enabled:
+                return FramePacket(b"", raw.seq, raw.timestamp, raw.source)
+            if context is None:
+                if boxes:
+                    self.preview_warning = ""
+                return self.record_sample()
+            # Settings and capture can change while this reader is waiting for
+            # the admission lock; never return a cache for that earlier view.
+            raw = self.record_sample()
+            if not raw.jpeg or self._preview_context() != context:
+                return raw
+            if self._live_preview is None:
+                from .live_overlay import LivePreviewWorker
+                self._live_preview = LivePreviewWorker(self.record_sample, self.market_latest,
+                                                       self._preview_context, self._preview_failed,
+                                                       slot=(self.cfg, self.id))
+            preview = self._live_preview
+            return preview.read(raw, context)
+
+    def preview_snapshot(self, boxes=True):
+        packet = self.preview_sample(boxes)
+        return packet.jpeg, packet.seq
+
     def frame_bgr(self):
         """解码后的小图（检测用，同帧只解一次）。"""
         return self.frame_sample()[0]
@@ -616,6 +680,64 @@ class Cam(threading.Thread):
     def market_latest(self):
         return self._algorithm_runner.latest() if self._algorithm_runner is not None else None
 
+    def refresh_preview_semantics(self):
+        """Refresh only a demanded preview's shared semantic source.
+
+        Hub owns algorithm_lock during this call, so an apply/reset cannot be
+        followed by a queued request with the previous model options. This
+        method never changes event confirmations, presence or recorder state.
+        """
+        from .algorithm_catalog import revision_for, validate_persisted_options
+        from .live_overlay import LivePreviewWorker, jpeg_size
+        with self._live_preview_lock:
+            preview = self._live_preview
+        if preview is None or not preview.demanded() or self.state != "online":
+            return False
+        context = self._preview_context()
+        if context is None:
+            return False
+        try:
+            with self.cfg.lock:
+                spec = self.cfg.get_camera(self.id)
+                if (spec is None or not spec.get("enabled", True)
+                        or not spec.get("detect", True)
+                        or source_identity(spec) != self.source_identity):
+                    return False
+                options = validate_persisted_options(dict(self.cfg.get("algorithms")))
+            if revision_for(options) != context:
+                return False
+        except (ValueError, TypeError):
+            return False
+        packet = self.record_sample()
+        size = jpeg_size(packet.jpeg)
+        now = time.time()
+        if (not packet.jpeg or size is None
+                or not 0 <= now - packet.timestamp <= LivePreviewWorker.CACHE_MAX_AGE):
+            return False
+        latest = self.market_latest()
+        if latest is not None:
+            batch, anchor = latest
+            # A recent valid negative is useful too: do not keep rerunning the
+            # model merely because no selected object was present in that frame.
+            if (anchor.source == packet.source and anchor.seq <= packet.seq
+                    and batch.size == size and batch.matches(anchor, context)
+                    and 0 <= now - anchor.timestamp <= .25):
+                return False
+        with self._algorithm_state_lock:
+            runner = self._algorithm_runner
+        if runner is not None:
+            with runner.lock:
+                job = runner.job
+                if job is not None and not job["done"].is_set():
+                    return False
+        # Stop/source/options can change during the cheap checks above. The
+        # paired runner/cache still reject late results after reset or stop.
+        if (self._preview_context() != context or not preview.demanded()
+                or self.state != "online"):
+            return False
+        self.market_infer(packet, options)
+        return True
+
     def reset_algorithm(self):
         if self._algorithm_runner is not None:
             self._algorithm_runner.reset()
@@ -623,6 +745,11 @@ class Cam(threading.Thread):
         self.person, self.hit, self.last_person = False, 0, 0.0
         self._last_detection_seq = None
         self._last_market_decision = None
+        with self._live_preview_lock:
+            preview = self._live_preview
+        if preview is not None:
+            preview.invalidate()
+        self.preview_warning = ""
 
     def info(self):
         st = self.state
@@ -635,6 +762,8 @@ class Cam(threading.Thread):
             "error": self.last_error,
             "annotation_warning": self.annotation_warning,
             "algorithm_warning": self.algorithm_warning,
+            "preview_warning": self.preview_warning,
+            "preview_boxes_eligible": self._preview_context() is not None,
             "source_type": "local" if self.is_local else "rtsp",
             "device_name": self.spec.get("device_name", "") if self.is_local else "",
         }

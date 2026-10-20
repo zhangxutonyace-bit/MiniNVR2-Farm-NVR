@@ -116,8 +116,9 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
             <option value="1">1 列</option><option value="2" selected>2 列</option>
             <option value="3">3 列</option><option value="4">4 列</option>
           </select></div>
-        <div class="hint" style="margin:0 0 8px">预览、检测与抽帧共用画面；流畅度取决于摄像头、网络和电脑性能。</div>
+        <div><label class="switch"><input type="checkbox" id="wallBoxes" checked><span>实时显示识别框和标签</span></label></div>
       </div>
+      <div class="hint" id="wallPreviewHint" role="status">应用商城算法并启用检测后，在预览查看选中目标；流畅度取决于摄像头、网络和电脑性能。</div>
     </div>
     <div id="wall" class="wall c2"></div>
   </section>
@@ -213,14 +214,14 @@ th{color:var(--txt2);font-weight:600;font-size:12px}
       <h3>勾选识别目标</h3>
       <div class="hint">以下为待应用的选择；修改后需点击“应用”，当前生效目标以页面上方说明为准。</div>
       <div id="algTargets" class="row" style="gap:16px"></div>
-      <div class="hint">色样对应新事件录像中的类别框和中文标签；按 FigJam 的红、橙、深蓝、黄绿四色稳定复用，不代表危险等级、身份或跟踪编号。宠物分别使用猫、狗的颜色，只标注实际识别类别。</div>
+      <div class="hint">色样对应预览和新事件录像中的类别框、中文标签；按 FigJam 的红、橙、深蓝、黄绿四色稳定复用，不代表危险等级、身份或跟踪编号。宠物分别使用猫、狗的颜色，只标注实际识别类别。</div>
       <div class="hint">“座椅（椅子/凳子）”使用 chair 类别，凳子不是单独的模型类别，可能漏检；桌子使用 dining table（餐桌）类别。“宠物”仅代表猫和狗，与单独勾选猫/狗会自动合并。</div>
       <div class="hint">选中目标出现即可按连续命中次数触发录像；静止的椅子、桌子等也可能使录像持续到单次事件上限。取消该目标或调整镜头可避免持续录像。效果受遮挡、距离和光线影响，请先在实际场景验证。</div>
       <div class="row" style="margin-top:14px">
         <div><label for="algConfidence">置信度（越高越严格）</label><input class="inp" id="algConfidence" type="number" min="0.1" max="0.95" step="0.05" value="0.35" style="width:140px"></div>
         <div><button id="algApply">应用模型和选中目标</button></div>
       </div>
-      <div class="hint">下载不会自动启用。应用后切换到“商城多目标检测”，先结束当前事件并保留录像，再使用新设置；预览与抽帧画面保持原样，目标框只写入新事件录像。事件录像显示目标框开关仍在“设置”。</div>
+      <div class="hint">下载不会自动启用。应用后切换到“商城多目标检测”，先结束当前事件并保留录像，再使用新设置。在“预览”可独立开关实时目标框；事件录像显示目标框开关仍在“设置”。抽帧保持原画面，旧录像不会补框。</div>
       <div id="algResult" class="hint" role="status" aria-live="polite"></div>
     </div>
   </section>

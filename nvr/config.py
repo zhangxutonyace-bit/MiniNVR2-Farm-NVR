@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import threading
+import time
 import uuid
 
 # ---------------- 路径（变量化，frozen 时跟着 exe 走） ----------------
@@ -163,6 +164,21 @@ def _deep_merge(base, over):
     return out
 
 
+def _replace_config_file(source, target):
+    """Keep atomic commit, allowing only brief Windows file-sharing conflicts."""
+    for attempt in range(4):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError as error:
+            if (os.name != "nt" or getattr(error, "winerror", None) not in (5, 32)
+                    or attempt == 3):
+                raise
+            # A reader such as a scanner can briefly hold a Windows file without
+            # FILE_SHARE_DELETE. Never truncate the original or retry forever.
+            time.sleep(.02 * (2 ** attempt))
+
+
 class Config(object):
     def __init__(self, path=None):
         self.path = path or os.path.join(data_dir(), "config.json")
@@ -188,7 +204,7 @@ class Config(object):
                 os.makedirs(d, exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, self.path)
+            _replace_config_file(tmp, self.path)
             return True
 
     def get(self, section, key=None, default=None):

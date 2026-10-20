@@ -347,6 +347,20 @@ class PreviewService:
     def _read_camera(cls, camera, ticket):
         if not cls._camera_matches(camera, ticket):
             return b"", "connecting", 0
+        if hasattr(camera, "preview_sample"):
+            # Cache access is outside the capture lock. Authorization and the
+            # worker identity must still match after the asynchronous read.
+            context = getattr(camera, "_preview_context", None)
+            revision = context() if callable(context) else None
+            packet = camera.preview_sample()
+            if (not cls._camera_matches(camera, ticket)
+                    or (callable(context) and context() != revision)):
+                return b"", "connecting", 0
+            if (not packet.source or packet.source[0] != worker_identity(camera)
+                    or (hasattr(camera, "_capture_epoch")
+                        and packet.source != (worker_identity(camera), camera._capture_epoch))):
+                return b"", "connecting", 0
+            return packet.jpeg, camera.state, packet.timestamp
         lock = getattr(camera, "lock", None)
         if lock is not None and hasattr(camera, "last_jpeg"):
             with lock:
