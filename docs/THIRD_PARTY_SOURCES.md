@@ -2,7 +2,9 @@
 
 ## V3.0 算法商城
 
-V3 继续使用现有 OpenCV DNN CPU，不新增 Ultralytics、PyTorch、ONNX Runtime 或 GPU 依赖，不下载或执行远程 Python/PT 代码。商城启用后，NanoDet 的同一 COCO 图用于选中类别的事件判断和录像标注；旧版模式继续保留独立人物画框行为。[v3.0.0 第三方源码资料 ZIP](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v3.0.0/MiniNVR2-v3.0.0-third-party-sources.zip)与 Windows 包一同提供，摘要见同版 [SHA256SUMS.txt](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v3.0.0/SHA256SUMS.txt)；包内另保留许可证和固定来源记录。
+V3 继续使用现有 OpenCV DNN CPU，不新增 Ultralytics、PyTorch、ONNX Runtime 或 GPU 依赖，不下载或执行远程 Python/PT 代码。商城启用后，NanoDet 的同一 COCO 图用于选中类别的事件判断和录像标注；旧版模式继续保留独立人物画框行为。[v3.1.0 第三方源码资料 ZIP](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v3.1.0/MiniNVR2-v3.1.0-third-party-sources.zip)与 Windows 包一同提供，摘要见同版 [SHA256SUMS.txt](https://github.com/zhangxutonyace-bit/MiniNVR2-Farm-NVR/releases/download/v3.1.0/SHA256SUMS.txt)；包内另保留许可证和固定来源记录。
+
+V3.1 实时预览继续复用这些模型、中文字体和 OpenCV DNN，不新增模型库或系统字体依赖；下载的 YOLOX 权重仍由用户另行获取，不放进便携包。
 
 | 模型 | 精确大小 | SHA-256 | 固定官方来源 / 输入配置 |
 | --- | --- | --- | --- |

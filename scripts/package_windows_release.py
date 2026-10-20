@@ -40,6 +40,9 @@ EVENT_USER_CHECKS = ("box_follows_person_user_confirmed", "computer_playback_use
 EVENT_USER_SCOPE = "current computer, camera, WeChat account and fresh event only"
 OBJECT_USER_CHECKS = ("object_box_label_following_user_confirmed", "computer_playback_user_confirmed",
                       "wechat_list_user_confirmed", "wechat_video_playback_user_confirmed")
+LIVE_PREVIEW_USER_CHECKS = ("preview_boxes_follow_user_confirmed", "preview_labels_user_confirmed",
+                            "preview_smooth_user_confirmed")
+LIVE_PREVIEW_USER_SCOPE = "current computer, local-camera desktop live preview only"
 
 
 def validate_bundled_person_assets(executable: Path) -> dict:
@@ -88,6 +91,20 @@ def validate_bundled_algorithm_assets(executable: Path) -> dict:
             "scope": "Local CPU selected-class events; YOLOX weights download only after explicit action"}
 
 
+def validate_bundled_live_preview_assets(executable: Path) -> dict:
+    """Check the released worker and exact preview controls without launching."""
+    from PyInstaller.archive.readers import CArchiveReader
+    archive = CArchiveReader(str(executable))
+    names = {name.replace("\\", "/"): name for name in archive.toc}
+    for relative in ("web/index.html", "web/app.js", "web/preview.html", "web/preview.js"):
+        if relative not in names or archive.extract(names[relative]) != (REPO / relative).read_bytes():
+            raise ValueError("Executable live-preview asset differs from approved source: " + relative)
+    if "nvr.live_overlay" not in archive.open_embedded_archive("PYZ.pyz").toc:
+        raise ValueError("Executable is missing the live-preview worker")
+    return {"worker_in_exe": True, "preview_controls_match_source": True,
+            "scope": "Shared selected-target preview boxes and Chinese labels; raw preview remains available"}
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -134,6 +151,9 @@ def validate_build(record: dict, version: str, digest: str, size: int) -> None:
     if preview_release and any(record.get(key) is not True for key in
                                ("mobile_and_status_assets_match_source", "preview_module_included")):
         raise ValueError("Build evidence does not verify the preview module and source assets")
+    if tuple(map(int, version.split("."))) >= (3, 1, 0) \
+            and record.get("live_overlay_module_included") is not True:
+        raise ValueError("Build evidence does not verify the live-preview worker")
 
 
 def validate_automatic(record: dict, version: str, checks: tuple[str, ...], label: str,
@@ -255,6 +275,44 @@ def validate_object_user(record: dict, version: str, digest: str, size: int) -> 
             "phone_object_label": "NOT_VERIFIED"}
 
 
+def validate_live_preview_user(record: dict, version: str, digest: str, size: int) -> dict:
+    """Publish desktop preview acceptance without inventing phone/event proof."""
+    from nvr.algorithm_catalog import validate_options
+    targets = record.get("targets")
+    options = validate_options({"model_id": record.get("model_id"), "targets": targets,
+                                "confidence": record.get("confidence")})
+    if record.get("artifact_type") != "Windows executable" or record.get("version") != version \
+            or record.get("exe_sha256") != digest or type(record.get("exe_bytes")) is not int \
+            or record["exe_bytes"] != size \
+            or any(record.get(key) is not True for key in LIVE_PREVIEW_USER_CHECKS):
+        raise ValueError("Missing user-confirmed live preview following, labels and smoothness for this exact EXE")
+    if record.get("camera_source_type") != "local-camera" \
+            or record.get("scope") != LIVE_PREVIEW_USER_SCOPE \
+            or len(set(targets)) != len(targets) or record.get("object_class") not in targets:
+        raise ValueError("Live preview acceptance requires selected targets and local-camera desktop scope")
+    revision = record.get("implementation_commit")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Live preview acceptance requires its implementation commit")
+    recorded = record.get("recorded_at_utc")
+    if not isinstance(recorded, str) or not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})", recorded):
+        raise ValueError("Live preview acceptance requires an ISO timestamp with timezone")
+    try:
+        verified = datetime.fromisoformat(recorded.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("Live preview acceptance has an invalid timestamp") from error
+    if verified.utcoffset() != timezone.utc.utcoffset(verified):
+        raise ValueError("Live preview acceptance recorded_at_utc must use UTC")
+    return {"status": "PASS_USER_CONFIRMED", "verified_date": verified.date().isoformat(),
+            "implementation_commit": revision, "exe_sha256": digest, "exe_bytes": size,
+            "camera_source_type": "local-camera", "model_id": options["model_id"],
+            "confidence": options["confidence"], "targets": options["targets"],
+            "object_class": record["object_class"],
+            **{key: True for key in LIVE_PREVIEW_USER_CHECKS},
+            "scope": "Current computer, local camera, selected model and tested object in desktop live preview only; no all-class, all-scene or universal frame-rate claim",
+            "phone_live_preview": "NOT_RETESTED", "event_playback": "NOT_RETESTED"}
+
+
 def write_windows_guide(source: Path, target: Path) -> None:
     if source.is_symlink() or not source.is_file():
         raise ValueError("Release guide must be an ordinary file: " + source.name)
@@ -274,6 +332,8 @@ def copy_user_guides(root: Path, version: str, include_preview: bool = False) ->
         guides.append(("LOCAL_CAMERA_QUICK_START.md", "电脑内置USB摄像头-操作步骤.txt"))
     if tuple(map(int, version.split("."))) >= (3, 0, 0):
         guides.append(("ALGORITHM_STORE_QUICK_START.md", "算法商城-操作步骤.txt"))
+    if tuple(map(int, version.split("."))) >= (3, 1, 0):
+        guides.append(("LIVE_PREVIEW_DETECTION.md", "实时预览识别框-操作步骤.txt"))
     for source, target in guides:
         write_windows_guide(REPO / "docs" / source, root / target)
     return [target for _, target in guides]
@@ -433,7 +493,9 @@ def main() -> int:
     parser.add_argument("--event-user-record", type=Path,
                         help="Required since 2.4.0: fresh local-camera person following and playback receipt")
     parser.add_argument("--object-user-record", type=Path,
-                        help="Required since 3.0.0: selected-object following, labels and playback receipt")
+                        help="Required for 3.0.x: selected-object following, labels and playback receipt")
+    parser.add_argument("--live-preview-user-record", type=Path,
+                        help="Required since 3.1.0: desktop live-preview following, labels and smoothness receipt")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", args.version):
         parser.error("version must have three numeric components")
@@ -443,16 +505,21 @@ def main() -> int:
     remote_release = tuple(map(int, args.version.split("."))) >= (2, 3, 0)
     local_camera_release = tuple(map(int, args.version.split("."))) >= (2, 4, 0)
     algorithm_release = tuple(map(int, args.version.split("."))) >= (3, 0, 0)
+    live_preview_release = tuple(map(int, args.version.split("."))) >= (3, 1, 0)
     if preview_release and (args.preview_record is None or
                             (not local_camera_release and args.phone_record is None)):
         raise ValueError("Preview releases require --preview-record and --phone-record")
     if local_camera_release and not algorithm_release and args.event_user_record is None:
         raise ValueError("Local-camera releases require --event-user-record for the exact EXE")
-    if algorithm_release and args.object_user_record is None:
+    if algorithm_release and not live_preview_release and args.object_user_record is None:
         raise ValueError("Algorithm-store releases require --object-user-record for the exact EXE")
+    if live_preview_release and args.live_preview_user_record is None:
+        raise ValueError("Live-preview releases require --live-preview-user-record for the exact EXE")
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     stem = "MiniNVR2-v" + args.version + "-windows-x64"
+    if (output / (stem + ".zip")).exists():
+        raise ValueError("Refuse to overwrite an existing Windows release archive")
     if args.executable.is_symlink() or not args.executable.is_file():
         raise ValueError("Executable must be an ordinary file")
     executable = args.executable.resolve()
@@ -463,6 +530,7 @@ def main() -> int:
     person_assets = validate_bundled_person_assets(executable)
     algorithm_assets = (validate_bundled_algorithm_assets(executable)
                         if tuple(map(int, args.version.split("."))) >= (3, 0, 0) else None)
+    live_preview_assets = validate_bundled_live_preview_assets(executable) if live_preview_release else None
     validate_build(read_record(args.build_record), args.version, original_hash, original_size)
     startup_checks = STARTUP_CHECKS + (("remote_preview_default_off",) if remote_release else ())
     startup = validate_automatic(read_record(args.startup_record), args.version, startup_checks, "startup",
@@ -488,6 +556,10 @@ def main() -> int:
     if args.object_user_record is not None:
         object_user = validate_object_user(read_record(args.object_user_record), args.version,
                                            original_hash, original_size)
+    live_preview_user = None
+    if args.live_preview_user_record is not None:
+        live_preview_user = validate_live_preview_user(read_record(args.live_preview_user_record), args.version,
+                                                       original_hash, original_size)
 
     staging = Path(tempfile.mkdtemp(prefix=stem + "-staging-", dir=output))
     root = staging / stem
@@ -537,6 +609,13 @@ def main() -> int:
                        "scope": "Current computer and local camera; selected-object fresh event recording and playback only"}
         live_delivery = {**identity, "commands": ["今日事件", "播放第一条"],
                          "scope": "Current WeChat account received a list and playable event video; object label appearance on the phone was not explicitly confirmed"}
+    if live_preview_user is not None and object_user is None and event_user is None:
+        identity = {key: live_preview_user[key] for key in
+                    ("status", "verified_date", "implementation_commit", "exe_sha256", "exe_bytes")}
+        real_camera = {**identity, "source_type": "local-camera",
+                       "scope": "Current computer and local camera; selected-object desktop live preview only; event recording/playback not retested"}
+        live_delivery = {"status": "NOT_RETESTED", "scope": "Real WeChat event delivery was not retested on this EXE; synthetic loopback delivery passed separately"}
+        object_following = {"status": "NOT_RETESTED", "scope": "Recorded-event object following was not retested on this EXE; desktop live preview is recorded separately"}
     manifest = {
         "application": "MiniNVR2", "version": args.version, "target": "Windows 10/11 x64",
         "source_commit": commit_id(),
@@ -546,12 +625,14 @@ def main() -> int:
         "runtime_components": components,
         "annotation_model": person_assets,
         "algorithm_store": algorithm_assets,
+        "live_preview": live_preview_assets,
         "user_guides": guides,
         "verification": {"existing_local_exe_startup": startup, "clawbot_event_simulation": events,
                          "lan_preview_simulation": preview, phone_verification_key: phone_preview,
                          "real_wechat_event_delivery": live_delivery,
                          "real_person_following": following,
                          "real_object_following": object_following,
+                         "real_desktop_live_preview": live_preview_user or {"status": "NOT_VERIFIED"},
                          "other_windows_machines": "NOT_VERIFIED", "real_camera": real_camera},
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -586,12 +667,14 @@ def main() -> int:
         phone_verification_key: phone_preview,
         "real_person_following": following,
         "real_object_following": object_following,
+        "real_desktop_live_preview": live_preview_user or {"status": "NOT_VERIFIED"},
         "real_camera": real_camera,
         "new_feature_tests_run": False,
         "wechat_quick_start_included": (root / "微信ClawBot-操作步骤.txt").is_file(),
         "lan_preview_quick_start_included": (root / "微信局域网预览-操作步骤.txt").is_file(),
         "remote_preview_quick_start_included": (root / "微信远程预览-操作步骤.txt").is_file(),
         "local_camera_quick_start_included": (root / "电脑内置USB摄像头-操作步骤.txt").is_file(),
+        "live_preview_quick_start_included": (root / "实时预览识别框-操作步骤.txt").is_file(),
         "third_party_sources_doc_included": (root / "THIRD_PARTY_SOURCES.md").is_file(),
         "ffmpeg_build_configuration_included": (root / "THIRD_PARTY_NOTICES" / "FFmpeg" / "BUILD_CONFIGURATION.txt").is_file(),
         "staging_directory": staging.name,

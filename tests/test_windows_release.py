@@ -34,6 +34,49 @@ class WindowsReleaseTests(unittest.TestCase):
                 "confidence": .35, "targets": ["bottle", "cup"], "object_class": "cup",
                 **{key: True for key in release.OBJECT_USER_CHECKS}}
 
+    def live_preview_receipt(self):
+        return {**self.event_receipt(), "version": "3.1.0", "model_id": "yolox-s",
+                "confidence": .35, "targets": ["bottle", "cup"], "object_class": "cup",
+                "scope": release.LIVE_PREVIEW_USER_SCOPE,
+                **{key: True for key in release.LIVE_PREVIEW_USER_CHECKS}}
+
+    def test_live_preview_acceptance_keeps_desktop_scope_without_phone_or_event_claims(self):
+        record = self.live_preview_receipt()
+        record.update(answer="private conversation", private_account="secret",
+                      phone_live_preview="PASS", event_playback="PASS")
+        public = release.validate_live_preview_user(record, "3.1.0", self.digest, self.size)
+        self.assertEqual(public["status"], "PASS_USER_CONFIRMED")
+        self.assertEqual(public["object_class"], "cup")
+        self.assertEqual(public["targets"], ["bottle", "cup"])
+        self.assertEqual(public["phone_live_preview"], "NOT_RETESTED")
+        self.assertEqual(public["event_playback"], "NOT_RETESTED")
+        self.assertNotIn("answer", public)
+        self.assertNotIn("private_account", public)
+        self.assertNotIn("wechat_video_playback_user_confirmed", public)
+
+    def test_live_preview_acceptance_rejects_wrong_exe_scope_and_incomplete_claims(self):
+        bad_fields = [("exe_sha256", "b" * 64), ("exe_bytes", self.size + 1),
+                      ("exe_bytes", str(self.size)), ("version", "3.0.0"),
+                      ("artifact_type", "source"), ("implementation_commit", "abc"),
+                      ("camera_source_type", "rtsp"), ("scope", release.EVENT_USER_SCOPE),
+                      ("targets", []), ("targets", ["cup", "cup"]),
+                      ("object_class", "dog"), ("model_id", "unapproved"),
+                      ("confidence", True), ("confidence", float("nan")),
+                      ("recorded_at_utc", "2026-10-19T12:00:00+08:00"),
+                      ("recorded_at_utc", "2026-02-30T12:00:00Z")]
+        bad_fields += [(key, value) for key in release.LIVE_PREVIEW_USER_CHECKS for value in (False, 1, "true")]
+        for key, value in bad_fields:
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                release.validate_live_preview_user({**self.live_preview_receipt(), key: value},
+                                                   "3.1.0", self.digest, self.size)
+        receipt = self.live_preview_receipt()
+        for key in tuple(receipt):
+            if key in release.EVENT_USER_CHECKS:
+                continue
+            with self.subTest(missing=key), self.assertRaises(ValueError):
+                release.validate_live_preview_user({k: v for k, v in receipt.items() if k != key},
+                                                   "3.1.0", self.digest, self.size)
+
     def test_object_acceptance_does_not_claim_person_or_phone_label_confirmation(self):
         record = self.object_receipt()
         for key in release.EVENT_USER_CHECKS:
@@ -135,6 +178,7 @@ class WindowsReleaseTests(unittest.TestCase):
                 ("2.3.0", ["--preview-record", "preview.json"], "--phone-record"),
                 ("2.4.0", ["--preview-record", "preview.json"], "--event-user-record"),
                 ("3.0.0", ["--preview-record", "preview.json"], "--object-user-record"),
+                ("3.1.0", ["--preview-record", "preview.json"], "--live-preview-user-record"),
                 ("2.4.0", ["--event-user-record", "event.json"], "--preview-record")):
             with self.subTest(version=version, args=args), \
                     mock.patch.object(release.sys, "argv", ["package_windows_release.py", "--version", version, *args]), \
@@ -236,7 +280,7 @@ class WindowsReleaseTests(unittest.TestCase):
                 release.read_record(path)
 
     def test_remote_and_legacy_packages_keep_correct_guides_and_evidence(self):
-        for version in ("2.2.3", "2.3.0", "2.4.0", "3.0.0"):
+        for version in ("2.2.3", "2.3.0", "2.4.0", "3.0.0", "3.1.0"):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
                 repo = Path(directory) / "synthetic-repo"
                 (repo / "dist").mkdir(parents=True)
@@ -250,11 +294,13 @@ class WindowsReleaseTests(unittest.TestCase):
                 digest = hashlib.sha256(executable).hexdigest()
                 for name in ("WINDOWS_DOWNLOAD.md", "WECHAT_QUICK_START.txt",
                              "LAN_PREVIEW_QUICK_START.txt", "REMOTE_PREVIEW.md",
-                             "LOCAL_CAMERA_QUICK_START.md", "ALGORITHM_STORE_QUICK_START.md"):
+                             "LOCAL_CAMERA_QUICK_START.md", "ALGORITHM_STORE_QUICK_START.md",
+                             "LIVE_PREVIEW_DETECTION.md"):
                     (repo / "docs" / name).write_text("合成操作说明\n第二行\n", encoding="utf-8")
                 identity = {"version": version, "exe_sha256": digest, "exe_bytes": len(executable)}
                 records = {"build": {**identity, "mobile_and_status_assets_match_source": True,
-                                     "preview_module_included": True},
+                                     "preview_module_included": True,
+                                     "live_overlay_module_included": True},
                            "startup": {**identity, **{key: "PASS" for key in release.STARTUP_CHECKS}},
                            "event": {**identity, **{key: "PASS" for key in release.EVENT_CHECKS}},
                            "preview": {**identity, **{key: "PASS" for key in release.PREVIEW_CHECKS}}}
@@ -264,7 +310,10 @@ class WindowsReleaseTests(unittest.TestCase):
                 else:
                     phone = {**identity, "phone_on_final_exe_verified": True,
                              "verified_date": "2026-10-19", "verified_command": "预览1号"}
-                if version == "3.0.0":
+                if version == "3.1.0":
+                    records["live-preview-user"] = {**self.live_preview_receipt(), **identity,
+                                                    "private_account": "secret"}
+                elif version == "3.0.0":
                     records["object-user"] = {**self.object_receipt(), **identity,
                                               "private_account": "secret"}
                 elif version == "2.4.0":
@@ -274,7 +323,7 @@ class WindowsReleaseTests(unittest.TestCase):
                     records["phone"] = phone
                 argv = ["package_windows_release.py", "--version", version,
                         "--output-dir", str(repo / "output")]
-                if version == "3.0.0":
+                if version in ("3.0.0", "3.1.0"):
                     alternate = repo / "accepted.exe"
                     alternate.write_bytes(executable)
                     (repo / "dist" / "MiniNVR2.exe").write_bytes(b"preserved old build")
@@ -297,6 +346,7 @@ class WindowsReleaseTests(unittest.TestCase):
                         mock.patch.object(release, "collect_notices", synthetic_notices), \
                         mock.patch.object(release, "validate_bundled_person_assets", return_value={"synthetic": True}), \
                         mock.patch.object(release, "validate_bundled_algorithm_assets", return_value={"synthetic": True}), \
+                        mock.patch.object(release, "validate_bundled_live_preview_assets", return_value={"synthetic": True}), \
                         mock.patch.object(release, "commit_id", return_value="c" * 40), \
                         mock.patch.object(release.metadata, "version", return_value="6.16.0"), \
                         mock.patch.object(release.subprocess, "run", side_effect=AssertionError("No process should run")), \
@@ -317,7 +367,20 @@ class WindowsReleaseTests(unittest.TestCase):
                         self.assertIn("微信远程预览-操作步骤.txt", manifest["user_guides"])
                         self.assertNotIn("real_phone_lan_preview", verification)
                         self.assertEqual(verification["existing_local_exe_startup"]["remote_preview_default_off"], "PASS")
-                        if version == "3.0.0":
+                        if version == "3.1.0":
+                            self.assertEqual(len(manifest["user_guides"]), 7)
+                            self.assertIn("实时预览识别框-操作步骤.txt", manifest["user_guides"])
+                            preview = verification["real_desktop_live_preview"]
+                            self.assertEqual(preview["status"], "PASS_USER_CONFIRMED")
+                            self.assertEqual(preview["exe_sha256"], digest)
+                            self.assertEqual(preview["phone_live_preview"], "NOT_RETESTED")
+                            self.assertEqual(preview["event_playback"], "NOT_RETESTED")
+                            self.assertEqual(verification["real_wechat_event_delivery"]["status"], "NOT_RETESTED")
+                            self.assertEqual(verification["real_object_following"]["status"], "NOT_RETESTED")
+                            self.assertEqual(verification["real_phone_remote_preview"]["status"], "NOT_RETESTED")
+                            self.assertEqual(verification["real_camera"]["status"], "PASS_USER_CONFIRMED")
+                            self.assertNotIn("secret", json.dumps(manifest))
+                        elif version == "3.0.0":
                             self.assertEqual(len(manifest["user_guides"]), 6)
                             self.assertEqual(verification["real_phone_remote_preview"]["status"], "NOT_RETESTED")
                             self.assertEqual(verification["real_person_following"]["status"], "NOT_VERIFIED")
@@ -353,7 +416,7 @@ class WindowsReleaseTests(unittest.TestCase):
                         self.assertIn("real_phone_lan_preview", verification)
                         self.assertNotIn("real_phone_remote_preview", verification)
                 self.assertEqual((repo / "dist" / "MiniNVR2.exe").read_bytes(),
-                                 b"preserved old build" if version == "3.0.0" else bytes(executable))
+                                 b"preserved old build" if version in ("3.0.0", "3.1.0") else bytes(executable))
 
     def test_person_assets_require_exact_model_and_notices_inside_executable(self):
         from nvr.person_localizer import MODEL_NAME, verify_model
@@ -407,6 +470,54 @@ class WindowsReleaseTests(unittest.TestCase):
             self.assertEqual(len(names), 6)
             text = (Path(directory) / "算法商城-操作步骤.txt").read_text(encoding="utf-8-sig")
             self.assertIn("结束当前事件并保留片段", text)
+
+    def test_v31_live_preview_assets_require_exact_controls_and_worker(self):
+        paths = ("web/index.html", "web/app.js", "web/preview.html", "web/preview.js")
+        assets = {name: (release.REPO / name).read_bytes() for name in paths}
+        archive = mock.Mock()
+        archive.toc = dict.fromkeys(assets)
+        archive.extract.side_effect = lambda name: assets[name]
+        archive.open_embedded_archive.return_value.toc = {"nvr.live_overlay": None}
+        with mock.patch("PyInstaller.archive.readers.CArchiveReader", return_value=archive):
+            self.assertTrue(release.validate_bundled_live_preview_assets(Path("synthetic.exe"))["worker_in_exe"])
+            archive.open_embedded_archive.return_value.toc = {}
+            with self.assertRaises(ValueError):
+                release.validate_bundled_live_preview_assets(Path("synthetic.exe"))
+            archive.open_embedded_archive.return_value.toc = {"nvr.live_overlay": None}
+            assets["web/app.js"] += b"drift"
+            with self.assertRaises(ValueError):
+                release.validate_bundled_live_preview_assets(Path("synthetic.exe"))
+
+    def test_v31_build_requires_live_preview_worker_evidence(self):
+        record = {"version": "3.1.0", "exe_sha256": self.digest, "exe_bytes": self.size,
+                  "mobile_and_status_assets_match_source": True, "preview_module_included": True}
+        for value in (None, False, 1, "true"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                release.validate_build({**record, "live_overlay_module_included": value},
+                                       "3.1.0", self.digest, self.size)
+        release.validate_build({**record, "live_overlay_module_included": True},
+                               "3.1.0", self.digest, self.size)
+
+    def test_v31_package_includes_readable_live_preview_guide(self):
+        with tempfile.TemporaryDirectory() as directory:
+            names = release.copy_user_guides(Path(directory), "3.1.0")
+            self.assertEqual(len(names), 7)
+            path = Path(directory) / "实时预览识别框-操作步骤.txt"
+            self.assertTrue(path.read_bytes().startswith(b"\xef\xbb\xbf"))
+            self.assertIn("实时显示识别框和标签", path.read_text(encoding="utf-8-sig"))
+
+    def test_packaging_refuses_to_overwrite_existing_release_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            archive = output / "MiniNVR2-v3.1.0-windows-x64.zip"
+            archive.write_bytes(b"preserved published package")
+            argv = ["package_windows_release.py", "--version", "3.1.0", "--output-dir", str(output),
+                    "--preview-record", "unused-preview.json", "--live-preview-user-record", "unused-user.json"]
+            with mock.patch.object(release.sys, "argv", argv), \
+                    mock.patch.object(release.sys, "version_info", (3, 12, 10)), \
+                    self.assertRaisesRegex(ValueError, "Refuse to overwrite"):
+                release.main()
+            self.assertEqual(archive.read_bytes(), b"preserved published package")
 
 
 if __name__ == "__main__":
