@@ -110,6 +110,12 @@ Use the repository's Python 3.12.10 environment with TEMP/TMP in `.tmp`. Run liv
 - The exact final-EXE public HTTP JPEG was visually inspected: readable Chinese “狗”/“汽车” labels, correct yellow-green/orange outlines and matching target positions. The original returned JPEG was not redrawn or re-encoded.
 - Implementation/build verification is complete; real-camera preview smoothness and phone preview are **pending user acceptance**. Spec `done` refers to the development deliverable. Local activation uses a cloned trial directory; original executable/config/recordings are preserved. No GitHub push or Release publication is part of this request.
 
+### User desktop acceptance (2026-10-20)
+
+- The user confirmed the requested V3.1 desktop preview workflow: **“彩框和标签能跟随，画面流畅”**. The test prompt used the existing YOLOX-S selection with cup/bottle targets, enabling the computer camera and moving a cup in the default-on annotated preview.
+- This is user-reported real-camera acceptance for that desktop workflow, linked to the activated candidate SHA-256 `89dd6e1b39cf448e5ba88a1d14088ba29577fe9b127662620c0c089f6f33f938`. Earlier pending statements above describe their original verification stage.
+- Phone preview, other models/objects, additional cameras and arbitrary hardware are not covered by this confirmation. No publication was requested or performed with this acceptance update.
+
 ## Suggested Review Order
 
 **预览入口与共享缓存**

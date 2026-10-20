@@ -35,4 +35,4 @@ Final offline suite: 410/410 PASS. Exact r4 Windows executable `89dd6e1b39cf448e
 
 An earlier r2 run exhausted a fixed toggle-to-drain deadline at the source-completion boundary. A read-only independent audit identified startup/drain phase overlap; the observer now records a bounded first-online phase separately and retains all original steady-state gates and every frame. This is a measurement correction, not a product-timing or model change.
 
-Real-camera and phone smoothness remain pending user acceptance. This local candidate has not been pushed or published.
+On 2026-10-20, the user confirmed the requested V3.1 desktop camera preview test: “彩框和标签能跟随，画面流畅”. Desktop real-camera acceptance is therefore user-confirmed for that workflow; phone preview and broader model/camera/hardware scenarios remain unverified. This local candidate has not been pushed or published.
